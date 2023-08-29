@@ -1,6 +1,7 @@
 FROM node:18 as installer
 COPY . /juice-shop
 WORKDIR /juice-shop
+RUN rm -rf node_modules
 RUN npm i -g typescript ts-node
 RUN npm install --omit=dev --unsafe-perm
 RUN npm dedupe
@@ -15,7 +16,7 @@ RUN rm data/chatbot/botDefaultTrainingData.json || true
 RUN rm ftp/legal.md || true
 RUN rm i18n/*.json || true
 
-FROM gcr.io/distroless/nodejs:18
+FROM node:18
 ARG BUILD_DATE
 ARG VCS_REF
 LABEL maintainer="Bjoern Kimminich <bjoern.kimminich@owasp.org>" \
