@@ -9,6 +9,7 @@ spec:
     matchLabels:
       app: snyk-juice-shop
   replicas: 1
+  revisionHistoryLimit: 0
   template:
     metadata:
       labels:
