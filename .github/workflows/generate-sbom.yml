@@ -13,6 +13,11 @@ jobs:
           uses: actions/setup-node@v3
           with:
             node-version: 18.4
+            cache: 'npm'
+        - run: |
+            npm install --ignore-scripts
+            cd frontend
+            npm install --ignore-scripts --legacy-peer-deps
         - uses: snyk/actions/setup@master
         - name: Snyk SBOM Generate
           run: snyk sbom --all-projects --exclude=build --format=cyclonedx1.4+json --json-file-output=sbom-cyclonedx.json # Exclude the 'build' directory
