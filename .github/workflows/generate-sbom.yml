@@ -10,10 +10,9 @@ jobs:
     steps:
         - uses: actions/checkout@master
         - name: Use Node.js
-          uses: actions/setup-node@v2
+          uses: actions/setup-node@v1
           with:
             node-version: 18.4
-            cache: 'npm'
         - name: "Install CLI tools"
           run: npm install -g @angular/cli@$ANGULAR_CLI_VERSION
         - name: Install minimalistically
