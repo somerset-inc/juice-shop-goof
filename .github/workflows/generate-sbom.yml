@@ -17,7 +17,7 @@ jobs:
         - name: Snyk SBOM Generate
           run: snyk sbom --all-projects --exclude=build --format=cyclonedx1.4+json --json-file-output=sbom-cyclonedx.json # Exclude the 'build' directory
           env:
-            SNYK_TOKEN: ${{ secrets.SNYK_API_TOKEN }}
+            SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
         - name: 'Upload SBOM'
           uses: actions/upload-artifact@v3
           with:
