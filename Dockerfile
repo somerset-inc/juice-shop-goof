@@ -19,11 +19,10 @@ RUN rm i18n/*.json || true
 FROM node:18
 ARG BUILD_DATE
 ARG VCS_REF
-LABEL org.opencontainers.image.licenses="MIT" \
-    org.opencontainers.image.version="1.0.0" \
-    org.opencontainers.image.source="https://github.com/somerset-inc/juice-shop-goof" \
-    org.opencontainers.image.revision=$VCS_REF \
-    org.opencontainers.image.created=$BUILD_DATE
+LABEL org.opencontainers.image.licenses="MIT"
+LABEL org.opencontainers.image.version="1.0.0"
+LABEL org.opencontainers.image.source="https://github.com/somerset-inc/juice-shop-goof"
+LABEL io.snyk.containers.image.dockerfile="/Dockerfile"
 WORKDIR /juice-shop
 COPY --from=installer --chown=65532:0 /juice-shop .
 USER 65532
