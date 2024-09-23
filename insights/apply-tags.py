@@ -11,6 +11,7 @@ args = parser.parse_args()
 SNYK_TOKEN = args.snyk_token
 ORG_ID = args.org_id
 ORIGIN = args.origin
+BASE_URL = default: "https://api.snyk.io"
 
 BASE_URL = "https://api.snyk.io"
 
