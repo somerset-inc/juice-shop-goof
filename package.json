@@ -112,6 +112,7 @@
     ]
   },
   "dependencies": {
+    "adm-zip": "0.4.7",
     "body-parser": "^1.20.2",
     "check-dependencies": "^1.1.0",
     "check-internet-connected": "^2.0.6",
