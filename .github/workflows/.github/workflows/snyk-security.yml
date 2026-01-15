@@ -1,0 +1,42 @@
+name: "Snyk Security Scan"
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+
+jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm install --package-lock-only # Snyk needs the lockfile to scan accurately
+
+      # 1. Scan Open Source Dependencies
+      - name: Snyk Open Source Scan
+        continue-on-error: true # Allows upload even if vulnerabilities are found
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --sarif-file-output=snyk-oss.sarif
+
+      # 2. Scan Custom Code (Static Analysis)
+      - name: Snyk Code Scan
+        continue-on-error: true
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          command: code test
+          args: --sarif-file-output=snyk-code.sarif
+
+      # 3. Upload results to GitHub Security Tab
+      - name: Upload SARIF to GitHub
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: . # This will pick up both sarif files
