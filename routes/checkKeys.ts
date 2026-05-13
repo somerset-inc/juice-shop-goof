@@ -1,13 +1,12 @@
 import { type Request, type Response } from 'express'
-import { HDNodeWallet } from 'ethers'
-import challengeUtils = require('../lib/challengeUtils')
+import * as challengeUtils from '../lib/challengeUtils'
 import * as utils from '../lib/utils'
+import { challenges } from '../data/datacache'
 
-const challenges = require('../data/datacache').challenges
-
-module.exports.checkKeys = function checkKeys () {
-  return (req: Request, res: Response) => {
+export function checkKeys () {
+  return async (req: Request, res: Response) => {
     try {
+      const { HDNodeWallet } = await import('ethers')
       const mnemonic = 'purpose betray marriage blame crunch monitor spin slide donate sport lift clutch'
       const mnemonicWallet = HDNodeWallet.fromPhrase(mnemonic)
       const privateKey = mnemonicWallet.privateKey
@@ -32,7 +31,7 @@ module.exports.checkKeys = function checkKeys () {
     }
   }
 }
-module.exports.nftUnlocked = function nftUnlocked () {
+export function nftUnlocked () {
   return (req: Request, res: Response) => {
     try {
       res.status(200).json({ status: challenges.nftUnlockChallenge.solved })

@@ -11,7 +11,7 @@ const routes: Routes = [
   },
   {
     path: 'about',
-    component: AboutComponent
+    loadComponent: async () => await loadAboutComponent()
   },
   {
     path: 'address/select',
@@ -67,10 +67,6 @@ const routes: Routes = [
     component: ComplaintComponent
   },
   {
-    path: 'chatbot',
-    component: ChatbotComponent
-  },
-  {
     path: 'order-summary',
     component: OrderSummaryComponent
   },
@@ -96,7 +92,7 @@ const routes: Routes = [
   },
   {
     path: 'recycle',
-    component: RecycleComponent
+    loadComponent: async () => await loadRecycleComponent()
   },
   {
     path: 'register',
@@ -165,7 +161,15 @@ const routes: Routes = [
   },
   {
     path: 'web3-sandbox',
-    loadChildren: async () => await loadWeb3SandboxtModule()
+    loadChildren: async () => await loadWeb3SandboxModule()
+  },
+  {
+    path: 'chatbot',
+    component: ChatbotComponent,
+    children: [
+      { path: '', component: ChatWelcomePageComponent },
+      { path: 'conversation/:id', component: ChatConversationComponent }
+    ]
   },
   {
     path: 'bee-haven',
@@ -179,6 +183,10 @@ const routes: Routes = [
   {
     matcher: tokenMatcher,
     component: TokenSaleComponent
+  },
+  {
+    path: 'coding-challenge/:challengeKey',
+    loadComponent: async () => await loadCodingChallenge()
   },
   {
     path: '403',

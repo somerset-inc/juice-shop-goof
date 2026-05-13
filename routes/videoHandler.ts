@@ -1,21 +1,21 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
-import fs = require('fs')
-import { type Request, type Response } from 'express'
-import challengeUtils = require('../lib/challengeUtils')
+import fs from 'node:fs'
 import config from 'config'
+import { type Request, type Response } from 'express'
+import { AllHtmlEntities as Entities } from 'html-entities'
+
+import * as challengeUtils from '../lib/challengeUtils'
+import { themes } from '../views/themes/themes'
+import { challenges } from '../data/datacache'
 import * as utils from '../lib/utils'
 
-const pug = require('pug')
-const challenges = require('../data/datacache').challenges
-const themes = require('../views/themes/themes').themes
-const Entities = require('html-entities').AllHtmlEntities
 const entities = new Entities()
 
-exports.getVideo = () => {
+export const getVideo = () => {
   return (req: Request, res: Response) => {
     const path = videoPath()
     const stat = fs.statSync(path)
@@ -47,23 +47,25 @@ exports.getVideo = () => {
   }
 }
 
-exports.promotionVideo = () => {
+export const promotionVideo = () => {
   return (req: Request, res: Response) => {
-    fs.readFile('views/promotionVideo.pug', function (err, buf) {
+    fs.readFile('views/promotionVideo.pug', async function (err, buf) {
       if (err != null) throw err
       let template = buf.toString()
       const subs = getSubsFromFile()
 
       challengeUtils.solveIf(challenges.videoXssChallenge, () => { return utils.contains(subs, '</script><script>alert(`xss`)</script>') })
 
-      const theme = themes[config.get<string>('application.theme')]
-      template = template.replace(/_title_/g, entities.encode(config.get('application.name')))
+      const themeKey = config.get<string>('application.theme') as keyof typeof themes
+      const theme = themes[themeKey] || themes['bluegrey-lightgreen']
+      template = template.replace(/_title_/g, entities.encode(config.get<string>('application.name')))
       template = template.replace(/_favicon_/g, favicon())
       template = template.replace(/_bgColor_/g, theme.bgColor)
       template = template.replace(/_textColor_/g, theme.textColor)
       template = template.replace(/_navColor_/g, theme.navColor)
       template = template.replace(/_primLight_/g, theme.primLight)
       template = template.replace(/_primDark_/g, theme.primDark)
+      const pug = (await import('pug')).default
       const fn = pug.compile(template)
       let compiledTemplate = fn()
       compiledTemplate = compiledTemplate.replace('<script id="subtitle"></script>', '<script id="subtitle" type="text/vtt" data-label="English" data-lang="en">' + subs + '</script>')

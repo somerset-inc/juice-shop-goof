@@ -1,7 +1,9 @@
 /*!
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
+
+@use '../../styles/variables' as *;
 
 $bg-heading: rgba(0, 0, 0, 0.13);
 
@@ -11,7 +13,6 @@ $bg-heading: rgba(0, 0, 0, 0.13);
 }
 
 mat-card {
-  display: block;
   margin-left: 20%;
   margin-right: 20%;
 }
@@ -19,45 +20,37 @@ mat-card {
 .heading {
   background: $bg-heading;
   justify-content: center;
-  padding: 12px 20px;
+  padding: $space-s $space-ml;
 }
 
-.mat-row {
-  padding-bottom: 10px;
+.mat-mdc-row {
+  padding-bottom: $space-s;
 }
 
 .mat-column-description {
-  margin-left: 20px;
+  margin-left: $space-ml;
 }
 
 .mat-column-bonus {
-  margin-left: 20px;
+  margin-left: $space-ml;
 }
 
 .mat-column-price {
-  margin-left: 20px;
-}
-
-.mat-column-quantity button mat-button-toggle {
-  width: 20px;
-}
-
-.mat-column-quantity button {
-  width: 22px;
+  margin-left: $space-ml;
 }
 
 mat-form-field {
-  margin-top: 15px;
+  margin-top: $space-m;
   width: 100%;
 }
 
 mat-expansion-panel {
-  margin-bottom: 20px;
+  margin-bottom: $space-ml;
 }
 
 #checkoutButton {
   margin-left: 20%;
-  margin-top: 30px;
+  margin-top: $space-xl;
   width: 60%;
 }
 
@@ -65,9 +58,17 @@ mat-expansion-panel {
   display: flex;
   font-size: 13px;
   justify-content: center;
-  margin-top: 5px;
+  margin-top: $space-2xs;
 }
 
 .payment-label {
-  padding-top: 10px;
+  padding-top: $space-s;
+}
+
+@media (max-width: 599.98px) {
+  mat-card {
+    margin-bottom: $space-2xl;
+    margin-left: $space-m;
+    margin-right: $space-m;
+  }
 }

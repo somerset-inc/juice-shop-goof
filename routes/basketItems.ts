@@ -1,24 +1,24 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
 import { type Request, type Response, type NextFunction } from 'express'
 import { BasketItemModel } from '../models/basketitem'
 import { QuantityModel } from '../models/quantity'
-import challengeUtils = require('../lib/challengeUtils')
+import * as challengeUtils from '../lib/challengeUtils'
 
 import * as utils from '../lib/utils'
-const challenges = require('../data/datacache').challenges
-const security = require('../lib/insecurity')
+import { challenges } from '../data/datacache'
+import * as security from '../lib/insecurity'
 
 interface RequestWithRawBody extends Request {
   rawBody: string
 }
 
-module.exports.addBasketItem = function addBasketItem () {
-  return (req: RequestWithRawBody, res: Response, next: NextFunction) => {
-    const result = utils.parseJsonCustom(req.rawBody)
+export function addBasketItem () {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const result = utils.parseJsonCustom((req as RequestWithRawBody).rawBody)
     const productIds = []
     const basketIds = []
     const quantities = []
@@ -45,26 +45,27 @@ module.exports.addBasketItem = function addBasketItem () {
       challengeUtils.solveIf(challenges.basketManipulateChallenge, () => { return user && basketItem.BasketId && basketItem.BasketId !== 'undefined' && user.bid != basketItem.BasketId }) // eslint-disable-line eqeqeq
 
       const basketItemInstance = BasketItemModel.build(basketItem)
-      basketItemInstance.save().then((addedBasketItem: BasketItemModel) => {
+      try {
+        const addedBasketItem = await basketItemInstance.save()
         res.json({ status: 'success', data: addedBasketItem })
-      }).catch((error: Error) => {
+      } catch (error) {
         next(error)
-      })
+      }
     }
   }
 }
 
-module.exports.quantityCheckBeforeBasketItemAddition = function quantityCheckBeforeBasketItemAddition () {
+export function quantityCheckBeforeBasketItemAddition () {
   return (req: Request, res: Response, next: NextFunction) => {
     void quantityCheck(req, res, next, req.body.ProductId, req.body.quantity).catch((error: Error) => {
       next(error)
     })
   }
 }
-
-module.exports.quantityCheckBeforeBasketItemUpdate = function quantityCheckBeforeBasketItemUpdate () {
-  return (req: Request, res: Response, next: NextFunction) => {
-    BasketItemModel.findOne({ where: { id: req.params.id } }).then((item: BasketItemModel | null) => {
+export function quantityCheckBeforeBasketItemUpdate () {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const item = await BasketItemModel.findOne({ where: { id: req.params.id } })
       const user = security.authenticatedUsers.from(req)
       challengeUtils.solveIf(challenges.basketManipulateChallenge, () => { return user && req.body.BasketId && user.bid != req.body.BasketId }) // eslint-disable-line eqeqeq
       if (req.body.quantity) {
@@ -75,9 +76,9 @@ module.exports.quantityCheckBeforeBasketItemUpdate = function quantityCheckBefor
       } else {
         next()
       }
-    }).catch((error: Error) => {
+    } catch (error) {
       next(error)
-    })
+    }
   }
 }
 

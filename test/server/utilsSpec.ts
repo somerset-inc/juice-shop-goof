@@ -1,14 +1,16 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
-import chai = require('chai')
+import type { ChallengeModel } from 'models/challenge'
+
+import * as utils from '../../lib/utils'
+
+import chai from 'chai'
 const expect = chai.expect
 
 describe('utils', () => {
-  const utils = require('../../lib/utils')
-
   describe('toSimpleIpAddress', () => {
     it('returns ipv6 address unchanged', () => {
       expect(utils.toSimpleIpAddress('2001:0db8:85a3:0000:0000:8a2e:0370:7334')).to.equal('2001:0db8:85a3:0000:0000:8a2e:0370:7334')
@@ -109,6 +111,101 @@ describe('utils', () => {
           'tss:x:970:970:tss user for tpm2:/:/usr/bin/nologin\n' +
           'usbmux:x:140:140:usbmux user:/:/usr/bin/nologin\n' +
           'moi:x:1000:1000:moi:/home/moi:/bin/zsh\n')).to.equal(true)
+    })
+  })
+
+  describe('getChallengeEnablementStatus', () => {
+    const defaultIsEnvironmentFunctions = {
+      isDocker: () => false,
+      isHeroku: () => false,
+      isWindows: () => false,
+      isGitpod: () => false
+    }
+
+    for (const safetyMode of ['enabled', 'disabled', 'auto'] as const) {
+      it(`challenges without disabledEnv are enabled with safetyMode set to ${safetyMode}`, () => {
+        const challenge: ChallengeModel = { disabledEnv: null } as unknown as ChallengeModel
+
+        expect(utils.getChallengeEnablementStatus(challenge, safetyMode, defaultIsEnvironmentFunctions))
+          .to.deep.equal({ enabled: true, disabledBecause: null })
+      })
+    }
+
+    const testCases = [
+      { name: 'Docker', environmentFunction: 'isDocker' },
+      { name: 'Heroku', environmentFunction: 'isHeroku' },
+      { name: 'Windows', environmentFunction: 'isWindows' },
+      { name: 'Gitpod', environmentFunction: 'isGitpod' }
+    ]
+
+    for (const testCase of testCases) {
+      it(`safetyMode: 'enabled': challenge with disabledOnEnv ${testCase.name} should be marked as disabled`, () => {
+        const challenge: ChallengeModel = { disabledEnv: testCase.name } as unknown as ChallengeModel
+
+        const isEnvironmentFunctions = { ...defaultIsEnvironmentFunctions, [testCase.environmentFunction]: () => true }
+        expect(utils.getChallengeEnablementStatus(challenge, 'enabled', isEnvironmentFunctions))
+          .to.deep.equal({ enabled: false, disabledBecause: testCase.name })
+      })
+
+      it(`safetyMode: 'auto': challenge with disabledOnEnv ${testCase.name} should be marked as disabled`, () => {
+        const challenge: ChallengeModel = { disabledEnv: testCase.name } as unknown as ChallengeModel
+
+        const isEnvironmentFunctions = { ...defaultIsEnvironmentFunctions, [testCase.environmentFunction]: () => true }
+        expect(utils.getChallengeEnablementStatus(challenge, 'auto', isEnvironmentFunctions))
+          .to.deep.equal({ enabled: false, disabledBecause: testCase.name })
+      })
+
+      it(`safetyMode: 'disabled': challenge with disabledOnEnv ${testCase.name} should be marked as enabled`, () => {
+        const challenge: ChallengeModel = { disabledEnv: testCase.name } as unknown as ChallengeModel
+
+        const isEnvironmentFunctions = { ...defaultIsEnvironmentFunctions, [testCase.environmentFunction]: () => true }
+        expect(utils.getChallengeEnablementStatus(challenge, 'disabled', isEnvironmentFunctions))
+          .to.deep.equal({ enabled: true, disabledBecause: null })
+      })
+    }
+  })
+
+  describe('startsWith', () => {
+    it('accepts string starting with another string', () => {
+      expect(utils.startsWith('Bla Blubb', 'Bla')).to.equal(true)
+    })
+
+    it('rejects string not starting with another string', () => {
+      expect(utils.startsWith('Bla Blubb', 'Lala')).to.equal(false)
+    })
+  })
+
+  describe('endsWith', () => {
+    it('accepts string ending with another string', () => {
+      expect(utils.endsWith('Bla Blubb', 'Blubb')).to.equal(true)
+    })
+
+    it('rejects string not ending with another string', () => {
+      expect(utils.endsWith('Bla Blubb', 'Lala')).to.equal(false)
+    })
+  })
+
+  describe('contains', () => {
+    it('accepts string containing another string', () => {
+      expect(utils.contains('Bla Blubb', 'la Bl')).to.equal(true)
+    })
+
+    it('rejects string containing another string', () => {
+      expect(utils.contains('Bla Blubb', 'Lala')).to.equal(false)
+    })
+  })
+
+  describe('toISO8601', () => {
+    it('converts date to ISO 8601 representation', () => {
+      expect(utils.toISO8601(new Date('2025-12-15T00:00:00Z'))).to.equal('2025-12-15')
+    })
+
+    it('prepends single-digit months with a zero', () => {
+      expect(utils.toISO8601(new Date('2025-03-15T00:00:00Z'))).to.equal('2025-03-15')
+    })
+
+    it('prepends single-digit days with a zero', () => {
+      expect(utils.toISO8601(new Date('2025-12-01T00:00:00Z'))).to.equal('2025-12-01')
     })
   })
 })

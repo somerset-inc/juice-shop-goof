@@ -1,155 +1,173 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
-import dataErasure from './routes/dataErasure'
-import fs = require('fs')
-import { type Request, type Response, type NextFunction } from 'express'
-import { sequelize } from './models'
+import i18n from 'i18n'
+import cors from 'cors'
+import fs from 'node:fs'
+import yaml from 'js-yaml'
+import config from 'config'
+import morgan from 'morgan'
+import multer from 'multer'
+import helmet from 'helmet'
+import http from 'node:http'
+import path from 'node:path'
+import express from 'express'
+import colors from 'colors/safe'
+import serveIndex from 'serve-index'
+import bodyParser from 'body-parser'
+// @ts-expect-error FIXME due to non-existing type definitions for finale-rest
+import * as finale from 'finale-rest'
+import compression from 'compression'
+// @ts-expect-error FIXME due to non-existing type definitions for express-robots-txt
+import robots from 'express-robots-txt'
+import cookieParser from 'cookie-parser'
+import * as Prometheus from 'prom-client'
+import swaggerUi from 'swagger-ui-express'
+import featurePolicy from 'feature-policy'
+import { IpFilter } from 'express-ipfilter'
+// @ts-expect-error FIXME due to non-existing type definitions for express-security.txt
+import securityTxt from 'express-security.txt'
+import { rateLimit } from 'express-rate-limit'
+import { getStream } from 'file-stream-rotator'
+import type { Request, Response, NextFunction } from 'express'
+
+import { sequelize, createSequelize, initModels, setSequelize } from './models'
 import { UserModel } from './models/user'
-import { QuantityModel } from './models/quantity'
 import { CardModel } from './models/card'
-import { PrivacyRequestModel } from './models/privacyRequests'
-import { AddressModel } from './models/address'
-import { SecurityAnswerModel } from './models/securityAnswer'
-import { SecurityQuestionModel } from './models/securityQuestion'
+import { HintModel } from './models/hint'
+import { WalletModel } from './models/wallet'
+import { ProductModel } from './models/product'
 import { RecycleModel } from './models/recycle'
+import { AddressModel } from './models/address'
+import { QuantityModel } from './models/quantity'
+import { FeedbackModel } from './models/feedback'
 import { ComplaintModel } from './models/complaint'
 import { ChallengeModel } from './models/challenge'
+import { ChallengeDependencyModel } from './models/challengeDependency'
 import { BasketItemModel } from './models/basketitem'
-import { FeedbackModel } from './models/feedback'
-import { ProductModel } from './models/product'
-import { WalletModel } from './models/wallet'
+import { SecurityAnswerModel } from './models/securityAnswer'
+import { PrivacyRequestModel } from './models/privacyRequests'
+import { SecurityQuestionModel } from './models/securityQuestion'
+
 import logger from './lib/logger'
-import config from 'config'
-import path from 'path'
-import morgan from 'morgan'
-import colors from 'colors/safe'
 import * as utils from './lib/utils'
+import * as antiCheat from './lib/antiCheat'
+import * as security from './lib/insecurity'
+import validateConfig from './lib/startup/validateConfig'
+import cleanupFtpFolder from './lib/startup/cleanupFtpFolder'
+import customizeEasterEgg from './lib/startup/customizeEasterEgg' // vuln-code-snippet hide-line
+import customizeApplication from './lib/startup/customizeApplication'
+import validatePreconditions, { preconditionsReady } from './lib/startup/validatePreconditions'
+import registerWebsocketEvents from './lib/startup/registerWebsocketEvents'
+import restoreOverwrittenFilesWithOriginals from './lib/startup/restoreOverwrittenFilesWithOriginals'
+
+import datacreator from './data/datacreator'
+import locales from './data/static/locales.json'
+
+import { login } from './routes/login'
+import * as verify from './routes/verify'
+import * as address from './routes/address'
+import * as metrics from './routes/metrics'
+import * as payment from './routes/payment'
+import { placeOrder } from './routes/order'
+import { b2bOrder } from './routes/b2bOrder'
+import * as delivery from './routes/delivery'
+import * as recycles from './routes/recycles'
+import * as twoFactorAuth from './routes/2fa'
+import { applyCoupon } from './routes/coupon'
+import dataErasure from './routes/dataErasure'
+import { dataExport } from './routes/dataExport'
+import { chat } from './routes/chat'
+import { retrieveBasket } from './routes/basket'
+import { searchProducts } from './routes/search'
+import { trackOrder } from './routes/trackOrder'
+import { saveLoginIp } from './routes/saveLoginIp'
+import { serveKeyFiles } from './routes/keyServer'
+import * as basketItems from './routes/basketItems'
+import { performRedirect } from './routes/redirect'
+import { serveEasterEgg } from './routes/easterEgg'
+import { getLanguageList } from './routes/languages'
+import { getUserProfile } from './routes/userProfile'
+import { serveAngularClient } from './routes/angular'
+import { resetPassword } from './routes/resetPassword'
+import { serveLogFiles } from './routes/logfileServer'
+import { servePublicFiles } from './routes/fileServer'
+import { addMemory, getMemories } from './routes/memory'
+import { changePassword } from './routes/changePassword'
+import { countryMapping } from './routes/countryMapping'
+import { retrieveAppVersion } from './routes/appVersion'
+import { captchas, verifyCaptcha } from './routes/captcha'
+import * as restoreProgress from './routes/restoreProgress'
+import { checkKeys, nftUnlocked } from './routes/checkKeys'
+import { retrieveLoggedInUser } from './routes/currentUser'
+import authenticatedUsers from './routes/authenticatedUsers'
+import { securityQuestion } from './routes/securityQuestion'
+import { servePremiumContent } from './routes/premiumReward'
+import { contractExploitListener } from './routes/web3Wallet'
+import { updateUserProfile } from './routes/updateUserProfile'
+import { getVideo, promotionVideo } from './routes/videoHandler'
+import { likeProductReviews } from './routes/likeProductReviews'
+import { repeatNotification } from './routes/repeatNotification'
+import { serveQuarantineFiles } from './routes/quarantineServer'
+import { showProductReviews } from './routes/showProductReviews'
+import { nftMintListener, walletNFTVerify } from './routes/nftMint'
+import { createProductReviews } from './routes/createProductReviews'
+import { getWalletBalance, addWalletBalance } from './routes/wallet'
+import { retrieveAppConfiguration } from './routes/appConfiguration'
+import { updateProductReviews } from './routes/updateProductReviews'
+import { servePrivacyPolicyProof } from './routes/privacyPolicyProof'
+import { profileImageUrlUpload } from './routes/profileImageUrlUpload'
+import { profileImageFileUpload } from './routes/profileImageFileUpload'
+import { serveCodeFixes, checkCorrectFix } from './routes/vulnCodeFixes'
+import { imageCaptchas, verifyImageCaptcha } from './routes/imageCaptcha'
+import { upgradeToDeluxe, deluxeMembershipStatus } from './routes/deluxe'
+import { serveCodeSnippet, checkVulnLines } from './routes/vulnCodeSnippet'
+import { orderHistory, allOrders, toggleDeliveryStatus } from './routes/orderHistory'
+import { continueCode, continueCodeFindIt, continueCodeFixIt } from './routes/continueCode'
+import { ensureFileIsPassed, handleZipFileUpload, checkUploadSize, checkFileType, handleXmlUpload, handleYamlUpload } from './routes/fileUpload'
+
+const app = express()
+const server = new http.Server(app)
+
+// errorhandler requires us from overwriting a string property on it's module which is a big no-no with esmodules :/
+
+const errorhandler = require('errorhandler')
 
 const startTime = Date.now()
-const finale = require('finale-rest')
-const express = require('express')
-const compression = require('compression')
-const helmet = require('helmet')
-const featurePolicy = require('feature-policy')
-const errorhandler = require('errorhandler')
-const cookieParser = require('cookie-parser')
-const serveIndex = require('serve-index')
-const bodyParser = require('body-parser')
-const cors = require('cors')
-const securityTxt = require('express-security.txt')
-const robots = require('express-robots-txt')
-const yaml = require('js-yaml')
-const swaggerUi = require('swagger-ui-express')
-const RateLimit = require('express-rate-limit')
-const client = require('prom-client')
-const ipfilter = require('express-ipfilter').IpFilter
-const swaggerDocument = yaml.load(fs.readFileSync('./swagger.yml', 'utf8'))
-const {
-  ensureFileIsPassed,
-  handleZipFileUpload,
-  checkUploadSize,
-  checkFileType,
-  handleXmlUpload
-} = require('./routes/fileUpload')
-const profileImageFileUpload = require('./routes/profileImageFileUpload')
-const profileImageUrlUpload = require('./routes/profileImageUrlUpload')
-const redirect = require('./routes/redirect')
-const vulnCodeSnippet = require('./routes/vulnCodeSnippet')
-const vulnCodeFixes = require('./routes/vulnCodeFixes')
-const angular = require('./routes/angular')
-const easterEgg = require('./routes/easterEgg')
-const premiumReward = require('./routes/premiumReward')
-const privacyPolicyProof = require('./routes/privacyPolicyProof')
-const appVersion = require('./routes/appVersion')
-const repeatNotification = require('./routes/repeatNotification')
-const continueCode = require('./routes/continueCode')
-const restoreProgress = require('./routes/restoreProgress')
-const fileServer = require('./routes/fileServer')
-const quarantineServer = require('./routes/quarantineServer')
-const keyServer = require('./routes/keyServer')
-const logFileServer = require('./routes/logfileServer')
-const metrics = require('./routes/metrics')
-const authenticatedUsers = require('./routes/authenticatedUsers')
-const currentUser = require('./routes/currentUser')
-const login = require('./routes/login')
-const changePassword = require('./routes/changePassword')
-const resetPassword = require('./routes/resetPassword')
-const securityQuestion = require('./routes/securityQuestion')
-const search = require('./routes/search')
-const coupon = require('./routes/coupon')
-const basket = require('./routes/basket')
-const order = require('./routes/order')
-const verify = require('./routes/verify')
-const recycles = require('./routes/recycles')
-const b2bOrder = require('./routes/b2bOrder')
-const showProductReviews = require('./routes/showProductReviews')
-const createProductReviews = require('./routes/createProductReviews')
-const checkKeys = require('./routes/checkKeys')
-const nftMint = require('./routes/nftMint')
-const web3Wallet = require('./routes/web3Wallet')
-const updateProductReviews = require('./routes/updateProductReviews')
-const likeProductReviews = require('./routes/likeProductReviews')
-const security = require('./lib/insecurity')
-const datacreator = require('./data/datacreator')
-const app = express()
-const server = require('http').Server(app)
-const appConfiguration = require('./routes/appConfiguration')
-const captcha = require('./routes/captcha')
-const trackOrder = require('./routes/trackOrder')
-const countryMapping = require('./routes/countryMapping')
-const basketItems = require('./routes/basketItems')
-const saveLoginIp = require('./routes/saveLoginIp')
-const userProfile = require('./routes/userProfile')
-const updateUserProfile = require('./routes/updateUserProfile')
-const videoHandler = require('./routes/videoHandler')
-const twoFactorAuth = require('./routes/2fa')
-const languageList = require('./routes/languages')
-const imageCaptcha = require('./routes/imageCaptcha')
-const dataExport = require('./routes/dataExport')
-const address = require('./routes/address')
-const payment = require('./routes/payment')
-const wallet = require('./routes/wallet')
-const orderHistory = require('./routes/orderHistory')
-const delivery = require('./routes/delivery')
-const deluxe = require('./routes/deluxe')
-const memory = require('./routes/memory')
-const chatbot = require('./routes/chatbot')
-const locales = require('./data/static/locales.json')
-const i18n = require('i18n')
-const antiCheat = require('./lib/antiCheat')
 
-const appName = config.get('application.customMetricsPrefix')
-const startupGauge = new client.Gauge({
+const swaggerDocument = yaml.load(fs.readFileSync('./swagger.yml', 'utf8'))
+
+const appName = config.get<string>('application.customMetricsPrefix')
+const startupGauge = new Prometheus.Gauge({
   name: `${appName}_startup_duration_seconds`,
   help: `Duration ${appName} required to perform a certain task during startup`,
   labelNames: ['task']
 })
 
 // Wraps the function and measures its (async) execution time
-const collectDurationPromise = (name: string, func: any) => {
+const collectDurationPromise = (name: string, func: (...args: any) => Promise<any>) => {
   return async (...args: any) => {
     const end = startupGauge.startTimer({ task: name })
-    const res = await func(...args)
-    end()
-    return res
+    try {
+      const res = await func(...args)
+      end()
+      return res
+    } catch (err) {
+      console.error('Error in timed startup function: ' + name, err)
+      throw err
+    }
   }
-}
-void collectDurationPromise('validatePreconditions', require('./lib/startup/validatePreconditions'))()
-void collectDurationPromise('cleanupFtpFolder', require('./lib/startup/cleanupFtpFolder'))()
-void collectDurationPromise('validateConfig', require('./lib/startup/validateConfig'))({})
-
-// Reloads the i18n files in case of server restarts or starts.
-async function restoreOverwrittenFilesWithOriginals () {
-  await collectDurationPromise('restoreOverwrittenFilesWithOriginals', require('./lib/startup/restoreOverwrittenFilesWithOriginals'))()
 }
 
 /* Sets view engine to hbs */
 app.set('view engine', 'hbs')
 
-// Function called first to ensure that all the i18n files are reloaded successfully before other linked operations.
-restoreOverwrittenFilesWithOriginals().then(() => {
+void collectDurationPromise('validatePreconditions', validatePreconditions)()
+void collectDurationPromise('cleanupFtpFolder', cleanupFtpFolder)()
+void collectDurationPromise('validateConfig', validateConfig)({})
+
+function configureApp (app: ReturnType<typeof express>, seq: typeof sequelize) {
   /* Locals */
   app.locals.captchaId = 0
   app.locals.captchaReqId = 1
@@ -200,6 +218,7 @@ restoreOverwrittenFilesWithOriginals().then(() => {
     acknowledgements: config.get('application.securityTxt.acknowledgements'),
     'Preferred-Languages': [...new Set(locales.map((locale: { key: string }) => locale.key.substr(0, 2)))].join(', '),
     hiring: config.get('application.securityTxt.hiring'),
+    csaf: config.get<string>('server.baseUrl') + config.get<string>('application.securityTxt.csaf'),
     expires: securityTxtExpiration.toUTCString()
   }))
 
@@ -225,7 +244,8 @@ restoreOverwrittenFilesWithOriginals().then(() => {
     res.end = function () {
       if (arguments.length) {
         const reqPath = req.originalUrl.replace(/\?.*$/, '')
-        const currentFolder = reqPath.split('/').pop() as string
+
+        const currentFolder = reqPath.split('/').pop()!
         arguments[0] = arguments[0].replace(/a href="([^"]+?)"/gi, function (matchString: string, matchedUrl: string) {
           let relativePath = path.relative(reqPath, matchedUrl)
           if (relativePath === '') {
@@ -247,17 +267,20 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   // vuln-code-snippet start directoryListingChallenge accessLogDisclosureChallenge
   /* /ftp directory browsing and file download */ // vuln-code-snippet neutral-line directoryListingChallenge
   app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true })) // vuln-code-snippet vuln-line directoryListingChallenge
-  app.use('/ftp(?!/quarantine)/:file', fileServer()) // vuln-code-snippet vuln-line directoryListingChallenge
-  app.use('/ftp/quarantine/:file', quarantineServer()) // vuln-code-snippet neutral-line directoryListingChallenge
+  app.use('/ftp(?!/quarantine)/:file', servePublicFiles()) // vuln-code-snippet vuln-line directoryListingChallenge
+  app.use('/ftp/quarantine/:file', serveQuarantineFiles()) // vuln-code-snippet neutral-line directoryListingChallenge
+
+  app.use('/.well-known', serveIndexMiddleware, serveIndex('.well-known', { icons: true, view: 'details' }))
+  app.use('/.well-known', express.static('.well-known'))
 
   /* /encryptionkeys directory browsing */
   app.use('/encryptionkeys', serveIndexMiddleware, serveIndex('encryptionkeys', { icons: true, view: 'details' }))
-  app.use('/encryptionkeys/:file', keyServer())
+  app.use('/encryptionkeys/:file', serveKeyFiles())
 
   /* /logs directory browsing */ // vuln-code-snippet neutral-line accessLogDisclosureChallenge
   app.use('/support/logs', serveIndexMiddleware, serveIndex('logs', { icons: true, view: 'details' })) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
   app.use('/support/logs', verify.accessControlChallenges()) // vuln-code-snippet hide-line
-  app.use('/support/logs/:file', logFileServer()) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
+  app.use('/support/logs/:file', serveLogFiles()) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
 
   /* Swagger documentation for B2B v2 endpoints */
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
@@ -265,6 +288,11 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   app.use(express.static(path.resolve('frontend/dist/frontend')))
   app.use(cookieParser('kekse'))
   // vuln-code-snippet end directoryListingChallenge accessLogDisclosureChallenge
+
+  /* Serve vendor dependencies locally instead of from CDN */
+  app.use('/vendor/beercss', express.static(path.resolve('node_modules/beercss/dist/cdn')))
+  app.use('/vendor/material-icons', express.static(path.resolve('node_modules/material-icons/iconfont')))
+  app.use('/vendor/fontsource-roboto', express.static(path.resolve('node_modules/@fontsource/roboto')))
 
   /* Configure and enable backend-side i18n */
   i18n.configure({
@@ -278,10 +306,10 @@ restoreOverwrittenFilesWithOriginals().then(() => {
 
   app.use(bodyParser.urlencoded({ extended: true }))
   /* File Upload */
-  app.post('/file-upload', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), handleZipFileUpload, checkUploadSize, checkFileType, handleXmlUpload)
-  app.post('/profile/image/file', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), profileImageFileUpload())
-  app.post('/profile/image/url', uploadToMemory.single('file'), profileImageUrlUpload())
-  app.post('/rest/memories', uploadToDisk.single('image'), ensureFileIsPassed, security.appendUserId(), metrics.observeFileUploadMetricsMiddleware(), memory.addMemory())
+  app.post('/file-upload', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), checkUploadSize, checkFileType, handleZipFileUpload, handleXmlUpload, handleYamlUpload)
+  app.post('/profile/image/file', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), utils.asyncHandler(profileImageFileUpload()))
+  app.post('/profile/image/url', uploadToMemory.single('file'), utils.asyncHandler(profileImageUrlUpload()))
+  app.post('/rest/memories', uploadToDisk.single('image'), ensureFileIsPassed, security.appendUserId(), metrics.observeFileUploadMetricsMiddleware(), utils.asyncHandler(addMemory()))
 
   app.use(bodyParser.text({ type: '*/*' }))
   app.use(function jsonParser (req: Request, res: Response, next: NextFunction) {
@@ -299,8 +327,10 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   })
 
   /* HTTP request logging */
-  const accessLogStream = require('file-stream-rotator').getStream({
-    filename: path.resolve('logs/access.log'),
+  const accessLogStream = getStream({
+    filename: path.resolve('logs/access.log.%DATE%'),
+    date_format: 'YYYY-MM-DD',
+    audit_file: 'logs/audit.json',
     frequency: 'daily',
     verbose: false,
     max_logs: '2d'
@@ -310,10 +340,10 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   // vuln-code-snippet start resetPasswordMortyChallenge
   /* Rate limiting */
   app.enable('trust proxy')
-  app.use('/rest/user/reset-password', new RateLimit({
+  app.use('/rest/user/reset-password', rateLimit({
     windowMs: 5 * 60 * 1000,
     max: 100,
-    keyGenerator ({ headers, ip }: { headers: any, ip: any }) { return headers['X-Forwarded-For'] || ip } // vuln-code-snippet vuln-line resetPasswordMortyChallenge
+    keyGenerator ({ headers, ip }: { headers: any, ip: any }) { return headers['X-Forwarded-For'] ?? ip } // vuln-code-snippet vuln-line resetPasswordMortyChallenge
   }))
   // vuln-code-snippet end resetPasswordMortyChallenge
 
@@ -341,6 +371,11 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   /* Challenges: GET list of challenges allowed. Everything else forbidden entirely */
   app.post('/api/Challenges', security.denyAll())
   app.use('/api/Challenges/:id', security.denyAll())
+  /* Hints: GET and PUT hints allowed. Everything else forbidden */
+  app.post('/api/Hints', security.denyAll())
+  app.route('/api/Hints/:id')
+    .get(security.denyAll())
+    .delete(security.denyAll())
   /* Complaints: POST and GET allowed when logged in only */
   app.get('/api/Complaints', security.isAuthorized())
   app.post('/api/Complaints', security.isAuthorized())
@@ -365,7 +400,7 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   /* Challenge evaluation before finale takes over */ // vuln-code-snippet hide-start
   app.post('/api/Feedbacks', verify.forgedFeedbackChallenge())
   /* Captcha verification before finale takes over */
-  app.post('/api/Feedbacks', captcha.verifyCaptcha())
+  app.post('/api/Feedbacks', utils.asyncHandler(verifyCaptcha()))
   /* Captcha Bypass challenge verification */
   app.post('/api/Feedbacks', verify.captchaBypassChallenge())
   /* User registration challenge verifications before finale takes over */
@@ -387,12 +422,12 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   /* Unauthorized users are not allowed to access B2B API */
   app.use('/b2b/v2', security.isAuthorized())
   /* Check if the quantity is available in stock and limit per user not exceeded, then add item to basket */
-  app.put('/api/BasketItems/:id', security.appendUserId(), basketItems.quantityCheckBeforeBasketItemUpdate())
-  app.post('/api/BasketItems', security.appendUserId(), basketItems.quantityCheckBeforeBasketItemAddition(), basketItems.addBasketItem())
+  app.put('/api/BasketItems/:id', security.appendUserId(), utils.asyncHandler(basketItems.quantityCheckBeforeBasketItemUpdate()))
+  app.post('/api/BasketItems', security.appendUserId(), utils.asyncHandler(basketItems.quantityCheckBeforeBasketItemAddition()), utils.asyncHandler(basketItems.addBasketItem()))
   /* Accounting users are allowed to check and update quantities */
   app.delete('/api/Quantitys/:id', security.denyAll())
   app.post('/api/Quantitys', security.denyAll())
-  app.use('/api/Quantitys/:id', security.isAccounting(), ipfilter(['123.456.789'], { mode: 'allow' }))
+  app.use('/api/Quantitys/:id', security.isAccounting(), IpFilter(['123.456.789'], { mode: 'allow' }))
   /* Feedbacks: Do not allow changes of existing feedback */
   app.put('/api/Feedbacks/:id', security.denyAll())
   /* PrivacyRequests: Only allowed for authenticated users */
@@ -400,56 +435,56 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   app.use('/api/PrivacyRequests/:id', security.isAuthorized())
   /* PaymentMethodRequests: Only allowed for authenticated users */
   app.post('/api/Cards', security.appendUserId())
-  app.get('/api/Cards', security.appendUserId(), payment.getPaymentMethods())
+  app.get('/api/Cards', security.appendUserId(), utils.asyncHandler(payment.getPaymentMethods()))
   app.put('/api/Cards/:id', security.denyAll())
-  app.delete('/api/Cards/:id', security.appendUserId(), payment.delPaymentMethodById())
-  app.get('/api/Cards/:id', security.appendUserId(), payment.getPaymentMethodById())
+  app.delete('/api/Cards/:id', security.appendUserId(), utils.asyncHandler(payment.delPaymentMethodById()))
+  app.get('/api/Cards/:id', security.appendUserId(), utils.asyncHandler(payment.getPaymentMethodById()))
   /* PrivacyRequests: Only POST allowed for authenticated users */
   app.post('/api/PrivacyRequests', security.isAuthorized())
   app.get('/api/PrivacyRequests', security.denyAll())
   app.use('/api/PrivacyRequests/:id', security.denyAll())
 
   app.post('/api/Addresss', security.appendUserId())
-  app.get('/api/Addresss', security.appendUserId(), address.getAddress())
+  app.get('/api/Addresss', security.appendUserId(), utils.asyncHandler(address.getAddress()))
   app.put('/api/Addresss/:id', security.appendUserId())
-  app.delete('/api/Addresss/:id', security.appendUserId(), address.delAddressById())
-  app.get('/api/Addresss/:id', security.appendUserId(), address.getAddressById())
-  app.get('/api/Deliverys', delivery.getDeliveryMethods())
-  app.get('/api/Deliverys/:id', delivery.getDeliveryMethod())
+  app.delete('/api/Addresss/:id', security.appendUserId(), utils.asyncHandler(address.delAddressById()))
+  app.get('/api/Addresss/:id', security.appendUserId(), utils.asyncHandler(address.getAddressById()))
+  app.get('/api/Deliverys', utils.asyncHandler(delivery.getDeliveryMethods()))
+  app.get('/api/Deliverys/:id', utils.asyncHandler(delivery.getDeliveryMethod()))
   // vuln-code-snippet end changeProductChallenge
 
   /* Verify the 2FA Token */
   app.post('/rest/2fa/verify',
-    new RateLimit({ windowMs: 5 * 60 * 1000, max: 100 }),
-    twoFactorAuth.verify()
+    rateLimit({ windowMs: 5 * 60 * 1000, max: 100, validate: false }),
+    utils.asyncHandler(twoFactorAuth.verify)
   )
   /* Check 2FA Status for the current User */
-  app.get('/rest/2fa/status', security.isAuthorized(), twoFactorAuth.status())
+  app.get('/rest/2fa/status', security.isAuthorized(), utils.asyncHandler(twoFactorAuth.status))
   /* Enable 2FA for the current User */
   app.post('/rest/2fa/setup',
-    new RateLimit({ windowMs: 5 * 60 * 1000, max: 100 }),
+    rateLimit({ windowMs: 5 * 60 * 1000, max: 100, validate: false }),
     security.isAuthorized(),
-    twoFactorAuth.setup()
+    utils.asyncHandler(twoFactorAuth.setup)
   )
   /* Disable 2FA Status for the current User */
   app.post('/rest/2fa/disable',
-    new RateLimit({ windowMs: 5 * 60 * 1000, max: 100 }),
+    rateLimit({ windowMs: 5 * 60 * 1000, max: 100, validate: false }),
     security.isAuthorized(),
-    twoFactorAuth.disable()
+    utils.asyncHandler(twoFactorAuth.disable)
   )
   /* Verifying DB related challenges can be postponed until the next request for challenges is coming via finale */
   app.use(verify.databaseRelatedChallenges())
 
   // vuln-code-snippet start registerAdminChallenge
   /* Generated API endpoints */
-  finale.initialize({ app, sequelize })
+  finale.initialize({ app, sequelize: seq })
 
   const autoModels = [
     { name: 'User', exclude: ['password', 'totpSecret'], model: UserModel },
     { name: 'Product', exclude: [], model: ProductModel },
     { name: 'Feedback', exclude: [], model: FeedbackModel },
     { name: 'BasketItem', exclude: [], model: BasketItemModel },
-    { name: 'Challenge', exclude: [], model: ChallengeModel },
+    { name: 'Challenge', exclude: [], model: ChallengeModel, include: [ChallengeDependencyModel] },
     { name: 'Complaint', exclude: [], model: ComplaintModel },
     { name: 'Recycle', exclude: [], model: RecycleModel },
     { name: 'SecurityQuestion', exclude: [], model: SecurityQuestionModel },
@@ -457,15 +492,17 @@ restoreOverwrittenFilesWithOriginals().then(() => {
     { name: 'Address', exclude: [], model: AddressModel },
     { name: 'PrivacyRequest', exclude: [], model: PrivacyRequestModel },
     { name: 'Card', exclude: [], model: CardModel },
-    { name: 'Quantity', exclude: [], model: QuantityModel }
+    { name: 'Quantity', exclude: [], model: QuantityModel },
+    { name: 'Hint', exclude: [], model: HintModel }
   ]
 
-  for (const { name, exclude, model } of autoModels) {
+  for (const { name, exclude, model, include } of autoModels) {
     const resource = finale.resource({
       model,
       endpoints: [`/api/${name}s`, `/api/${name}s/:id`],
       excludeAttributes: exclude,
-      pagination: false
+      pagination: false,
+      include
     })
 
     // create a wallet when a new user is registered using API
@@ -479,7 +516,7 @@ restoreOverwrittenFilesWithOriginals().then(() => {
     } // vuln-code-snippet neutral-line registerAdminChallenge
     // vuln-code-snippet end registerAdminChallenge
 
-    // translate challenge descriptions and hints on-the-fly
+    // translate challenge descriptions on-the-fly
     if (name === 'Challenge') {
       resource.list.fetch.after((req: Request, res: Response, context: { instance: string | any[], continue: any }) => {
         for (let i = 0; i < context.instance.length; i++) {
@@ -491,17 +528,11 @@ restoreOverwrittenFilesWithOriginals().then(() => {
           } else {
             context.instance[i].description = req.__(description)
           }
-          if (context.instance[i].hint) {
-            context.instance[i].hint = req.__(context.instance[i].hint)
-          }
         }
         return context.continue
       })
       resource.read.send.before((req: Request, res: Response, context: { instance: { description: string, hint: string }, continue: any }) => {
         context.instance.description = req.__(context.instance.description)
-        if (context.instance.hint) {
-          context.instance.hint = req.__(context.instance.hint)
-        }
         return context.continue
       })
     }
@@ -516,6 +547,20 @@ restoreOverwrittenFilesWithOriginals().then(() => {
       })
       resource.read.send.before((req: Request, res: Response, context: { instance: { question: string }, continue: any }) => {
         context.instance.question = req.__(context.instance.question)
+        return context.continue
+      })
+    }
+
+    // translate hints on-the-fly
+    if (name === 'Hint') {
+      resource.list.fetch.after((req: Request, res: Response, context: { instance: string | any[], continue: any }) => {
+        for (let i = 0; i < context.instance.length; i++) {
+          context.instance[i].text = req.__(context.instance[i].text)
+        }
+        return context.continue
+      })
+      resource.read.send.before((req: Request, res: Response, context: { instance: { text: string }, continue: any }) => {
+        context.instance.text = req.__(context.instance.text)
         return context.continue
       })
     }
@@ -548,95 +593,98 @@ restoreOverwrittenFilesWithOriginals().then(() => {
 
   /* Custom Restful API */
   app.post('/rest/user/login', login())
-  app.get('/rest/user/change-password', changePassword())
-  app.post('/rest/user/reset-password', resetPassword())
-  app.get('/rest/user/security-question', securityQuestion())
-  app.get('/rest/user/whoami', security.updateAuthenticatedUsers(), currentUser())
-  app.get('/rest/user/authentication-details', authenticatedUsers())
-  app.get('/rest/products/search', search())
-  app.get('/rest/basket/:id', basket())
-  app.post('/rest/basket/:id/checkout', order())
-  app.put('/rest/basket/:id/coupon/:coupon', coupon())
-  app.get('/rest/admin/application-version', appVersion())
-  app.get('/rest/admin/application-configuration', appConfiguration())
-  app.get('/rest/repeat-notification', repeatNotification())
-  app.get('/rest/continue-code', continueCode.continueCode())
-  app.get('/rest/continue-code-findIt', continueCode.continueCodeFindIt())
-  app.get('/rest/continue-code-fixIt', continueCode.continueCodeFixIt())
-  app.put('/rest/continue-code-findIt/apply/:continueCode', restoreProgress.restoreProgressFindIt())
-  app.put('/rest/continue-code-fixIt/apply/:continueCode', restoreProgress.restoreProgressFixIt())
-  app.put('/rest/continue-code/apply/:continueCode', restoreProgress.restoreProgress())
-  app.get('/rest/admin/application-version', appVersion())
-  app.get('/rest/captcha', captcha())
-  app.get('/rest/image-captcha', imageCaptcha())
+  app.get('/rest/user/change-password', utils.asyncHandler(changePassword()))
+  app.post('/rest/user/reset-password', utils.asyncHandler(resetPassword()))
+  app.get('/rest/user/security-question', utils.asyncHandler(securityQuestion()))
+  app.get('/rest/user/whoami', security.updateAuthenticatedUsers(), utils.asyncHandler(retrieveLoggedInUser()))
+  app.get('/rest/user/authentication-details', utils.asyncHandler(authenticatedUsers()))
+  app.get('/rest/products/search', utils.asyncHandler(searchProducts()))
+  app.get('/rest/basket/:id', utils.asyncHandler(retrieveBasket()))
+  app.post('/rest/basket/:id/checkout', placeOrder())
+  app.put('/rest/basket/:id/coupon/:coupon', utils.asyncHandler(applyCoupon()))
+  app.get('/rest/admin/application-version', utils.asyncHandler(retrieveAppVersion()))
+  app.get('/rest/admin/application-configuration', utils.asyncHandler(retrieveAppConfiguration()))
+  app.get('/rest/repeat-notification', utils.asyncHandler(repeatNotification()))
+  app.get('/rest/continue-code', utils.asyncHandler(continueCode()))
+  app.get('/rest/continue-code-findIt', utils.asyncHandler(continueCodeFindIt()))
+  app.get('/rest/continue-code-fixIt', utils.asyncHandler(continueCodeFixIt()))
+  app.put('/rest/continue-code-findIt/apply/:continueCode', utils.asyncHandler(restoreProgress.restoreProgressFindIt()))
+  app.put('/rest/continue-code-fixIt/apply/:continueCode', utils.asyncHandler(restoreProgress.restoreProgressFixIt()))
+  app.put('/rest/continue-code/apply/:continueCode', utils.asyncHandler(restoreProgress.restoreProgress()))
+  app.get('/rest/captcha', utils.asyncHandler(captchas()))
+  app.get('/rest/image-captcha', utils.asyncHandler(imageCaptchas()))
   app.get('/rest/track-order/:id', trackOrder())
-  app.get('/rest/country-mapping', countryMapping())
-  app.get('/rest/saveLoginIp', saveLoginIp())
-  app.post('/rest/user/data-export', security.appendUserId(), imageCaptcha.verifyCaptcha())
-  app.post('/rest/user/data-export', security.appendUserId(), dataExport())
-  app.get('/rest/languages', languageList())
-  app.get('/rest/order-history', orderHistory.orderHistory())
-  app.get('/rest/order-history/orders', security.isAccounting(), orderHistory.allOrders())
-  app.put('/rest/order-history/:id/delivery-status', security.isAccounting(), orderHistory.toggleDeliveryStatus())
-  app.get('/rest/wallet/balance', security.appendUserId(), wallet.getWalletBalance())
-  app.put('/rest/wallet/balance', security.appendUserId(), wallet.addWalletBalance())
-  app.get('/rest/deluxe-membership', deluxe.deluxeMembershipStatus())
-  app.post('/rest/deluxe-membership', security.appendUserId(), deluxe.upgradeToDeluxe())
-  app.get('/rest/memories', memory.getMemories())
-  app.get('/rest/chatbot/status', chatbot.status())
-  app.post('/rest/chatbot/respond', chatbot.process())
+  app.get('/rest/country-mapping', utils.asyncHandler(countryMapping()))
+  app.get('/rest/saveLoginIp', utils.asyncHandler(saveLoginIp()))
+  app.post('/rest/user/data-export', security.appendUserId(), utils.asyncHandler(verifyImageCaptcha()))
+  app.post('/rest/user/data-export', security.appendUserId(), utils.asyncHandler(dataExport()))
+  app.get('/rest/languages', utils.asyncHandler(getLanguageList()))
+  app.get('/rest/order-history', utils.asyncHandler(orderHistory()))
+  app.get('/rest/order-history/orders', security.isAccounting(), utils.asyncHandler(allOrders()))
+  app.put('/rest/order-history/:id/delivery-status', security.isAccounting(), utils.asyncHandler(toggleDeliveryStatus()))
+  app.get('/rest/wallet/balance', security.appendUserId(), utils.asyncHandler(getWalletBalance()))
+  app.put('/rest/wallet/balance', security.appendUserId(), utils.asyncHandler(addWalletBalance()))
+  app.get('/rest/deluxe-membership', deluxeMembershipStatus())
+  app.post('/rest/deluxe-membership', security.appendUserId(), utils.asyncHandler(upgradeToDeluxe()))
+  app.get('/rest/memories', utils.asyncHandler(getMemories()))
   /* NoSQL API endpoints */
   app.get('/rest/products/:id/reviews', showProductReviews())
-  app.put('/rest/products/:id/reviews', createProductReviews())
+  app.put('/rest/products/:id/reviews', utils.asyncHandler(createProductReviews()))
   app.patch('/rest/products/reviews', security.isAuthorized(), updateProductReviews())
-  app.post('/rest/products/reviews', security.isAuthorized(), likeProductReviews())
+  app.post('/rest/products/reviews', security.isAuthorized(), utils.asyncHandler(likeProductReviews()))
+
+  /* Chat API endpoint */
+  app.post('/rest/chat', utils.asyncHandler(chat()))
 
   /* Web3 API endpoints */
-  app.post('/rest/web3/submitKey', checkKeys.checkKeys())
-  app.get('/rest/web3/nftUnlocked', checkKeys.nftUnlocked())
-  app.get('/rest/web3/nftMintListen', nftMint.nftMintListener())
-  app.post('/rest/web3/walletNFTVerify', nftMint.walletNFTVerify())
-  app.post('/rest/web3/walletExploitAddress', web3Wallet.contractExploitListener())
+  app.post('/rest/web3/submitKey', utils.asyncHandler(checkKeys()))
+  app.get('/rest/web3/nftUnlocked', nftUnlocked())
+  app.get('/rest/web3/nftMintListen', utils.asyncHandler(nftMintListener()))
+  app.post('/rest/web3/walletNFTVerify', walletNFTVerify())
+  app.post('/rest/web3/walletExploitAddress', utils.asyncHandler(contractExploitListener()))
 
   /* B2B Order API */
   app.post('/b2b/v2/orders', b2bOrder())
 
   /* File Serving */
-  app.get('/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg', easterEgg())
-  app.get('/this/page/is/hidden/behind/an/incredibly/high/paywall/that/could/only/be/unlocked/by/sending/1btc/to/us', premiumReward())
-  app.get('/we/may/also/instruct/you/to/refuse/all/reasonably/necessary/responsibility', privacyPolicyProof())
+  app.get('/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg', serveEasterEgg())
+  app.get('/this/page/is/hidden/behind/an/incredibly/high/paywall/that/could/only/be/unlocked/by/sending/1btc/to/us', servePremiumContent())
+  app.get('/we/may/also/instruct/you/to/refuse/all/reasonably/necessary/responsibility', servePrivacyPolicyProof())
 
   /* Route for dataerasure page */
   app.use('/dataerasure', dataErasure)
 
   /* Route for redirects */
-  app.get('/redirect', redirect())
+  app.get('/redirect', performRedirect())
 
   /* Routes for promotion video page */
-  app.get('/promotion', videoHandler.promotionVideo())
-  app.get('/video', videoHandler.getVideo())
+  app.get('/promotion', promotionVideo())
+  app.get('/video', getVideo())
 
   /* Routes for profile page */
-  app.get('/profile', security.updateAuthenticatedUsers(), userProfile())
-  app.post('/profile', updateUserProfile())
+  app.get('/profile', security.updateAuthenticatedUsers(), utils.asyncHandler(getUserProfile()))
+  app.post('/profile', utils.asyncHandler(updateUserProfile()))
 
   /* Route for vulnerable code snippets */
-  app.get('/snippets', vulnCodeSnippet.serveChallengesWithCodeSnippet())
-  app.get('/snippets/:challenge', vulnCodeSnippet.serveCodeSnippet())
-  app.post('/snippets/verdict', vulnCodeSnippet.checkVulnLines())
-  app.get('/snippets/fixes/:key', vulnCodeFixes.serveCodeFixes())
-  app.post('/snippets/fixes', vulnCodeFixes.checkCorrectFix())
+  app.get('/snippets/:challenge', utils.asyncHandler(serveCodeSnippet()))
+  app.post('/snippets/verdict', utils.asyncHandler(checkVulnLines()))
+  app.get('/snippets/fixes/:key', utils.asyncHandler(serveCodeFixes()))
+  app.post('/snippets/fixes', utils.asyncHandler(checkCorrectFix()))
 
-  app.use(angular())
+  app.use(utils.asyncHandler(serveAngularClient()))
 
   /* Error Handling */
   app.use(verify.errorHandlingChallenge())
   app.use(errorhandler())
+}
+
+// Function called first to ensure that all the i18n files are reloaded successfully before other linked operations.
+restoreOverwrittenFilesWithOriginals().then(() => {
+  configureApp(app, sequelize)
 }).catch((err) => {
   console.error(err)
 })
 
-const multer = require('multer')
 const uploadToMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200000 } })
 const mimeTypeMap: any = {
   'image/png': 'png',
@@ -664,26 +712,23 @@ const uploadToDisk = multer({
   })
 })
 
-const expectedModels = ['Address', 'Basket', 'BasketItem', 'Captcha', 'Card', 'Challenge', 'Complaint', 'Delivery', 'Feedback', 'ImageCaptcha', 'Memory', 'PrivacyRequestModel', 'Product', 'Quantity', 'Recycle', 'SecurityAnswer', 'SecurityQuestion', 'User', 'Wallet']
+const expectedModels = ['Address', 'Basket', 'BasketItem', 'Captcha', 'Card', 'Challenge', 'ChallengeDependency', 'Complaint', 'Delivery', 'Feedback', 'ImageCaptcha', 'Memory', 'PrivacyRequestModel', 'Product', 'Quantity', 'Recycle', 'SecurityAnswer', 'SecurityQuestion', 'User', 'Wallet', 'Hint']
 while (!expectedModels.every(model => Object.keys(sequelize.models).includes(model))) {
   logger.info(`Entity models ${colors.bold(Object.keys(sequelize.models).length.toString())} of ${colors.bold(expectedModels.length.toString())} are initialized (${colors.yellow('WAITING')})`)
 }
-logger.info(`Entity models ${colors.bold(Object.keys(sequelize.models).length.toString())} of ${colors.bold(expectedModels.length.toString())} are initialized (${colors.green('OK')})`)
+logger.info(`Entity models ${colors.bold(Object.keys(sequelize.models).length.toString())} of ${colors.bold(expectedModels.length.toString())} are initialized (${colors.green('SUCCESS')})`)
 
 // vuln-code-snippet start exposedMetricsChallenge
 /* Serve metrics */
 let metricsUpdateLoop: any
 const Metrics = metrics.observeMetrics() // vuln-code-snippet neutral-line exposedMetricsChallenge
-const customizeEasterEgg = require('./lib/startup/customizeEasterEgg') // vuln-code-snippet hide-line
-app.get('/metrics', metrics.serveMetrics()) // vuln-code-snippet vuln-line exposedMetricsChallenge
-errorhandler.title = `${config.get('application.name')} (Express ${utils.version('express')})`
+app.get('/metrics', utils.asyncHandler(metrics.serveMetrics())) // vuln-code-snippet vuln-line exposedMetricsChallenge
+errorhandler.title = `${config.get<string>('application.name')} (Express ${utils.version('express')})`
 
-const registerWebsocketEvents = require('./lib/startup/registerWebsocketEvents')
-const customizeApplication = require('./lib/startup/customizeApplication')
-
-export async function start (readyCallback: any) {
+export async function start (readyCallback?: () => void) {
   const datacreatorEnd = startupGauge.startTimer({ task: 'datacreator' })
   await sequelize.sync({ force: true })
+  await preconditionsReady
   await datacreator()
   datacreatorEnd()
   const port = process.env.PORT ?? config.get('server.port')
@@ -701,6 +746,10 @@ export async function start (readyCallback: any) {
     if (readyCallback) {
       readyCallback()
     }
+    if (process.env.EXIT_ON_READY === 'true') {
+      // used to benchmark startup time
+      process.exit(0)
+    }
   })
 
   void collectDurationPromise('customizeApplication', customizeApplication)() // vuln-code-snippet hide-line
@@ -717,6 +766,21 @@ export function close (exitCode: number | undefined) {
   }
 }
 // vuln-code-snippet end exposedMetricsChallenge
+
+export async function createApp (options?: { inMemoryDb?: boolean }) {
+  const seq = options?.inMemoryDb ? createSequelize({ inMemory: true }) : sequelize
+  if (options?.inMemoryDb) {
+    initModels(seq)
+    setSequelize(seq)
+  }
+  Prometheus.register.clear()
+  const testApp = express()
+  testApp.set('view engine', 'hbs')
+  configureApp(testApp, seq)
+  await seq.sync({ force: true })
+  await datacreator()
+  return { app: testApp, sequelize: seq }
+}
 
 // stop server on sigint or sigterm signals
 process.on('SIGINT', () => { close(0) })

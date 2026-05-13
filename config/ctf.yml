@@ -1,6 +1,7 @@
 application:
   logo: JuiceShopCTF_Logo.png
   favicon: favicon_ctf.ico
+  theme: neon-fire
   showVersionNumber: false
   showGitHubLinks: false
   localBackupEnabled: false
@@ -8,8 +9,7 @@ application:
     showOnFirstStart: false
 challenges:
   showHints: false
-  safetyOverride: true
-  showFeedbackButtons: false
+  safetyMode: disabled
 hackingInstructor:
   isEnabled: false
 ctf:

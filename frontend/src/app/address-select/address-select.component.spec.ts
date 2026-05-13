@@ -1,16 +1,15 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
-import { HttpClientTestingModule } from '@angular/common/http/testing'
+import { provideHttpClientTesting } from '@angular/common/http/testing'
 import { MatCardModule } from '@angular/material/card'
 import { MatFormFieldModule } from '@angular/material/form-field'
-import { type ComponentFixture, TestBed, waitForAsync } from '@angular/core/testing'
+import { type ComponentFixture, TestBed } from '@angular/core/testing'
 import { MatInputModule } from '@angular/material/input'
 import { ReactiveFormsModule } from '@angular/forms'
-import { BrowserAnimationsModule } from '@angular/platform-browser/animations'
 
 import { MatTableModule } from '@angular/material/table'
 import { MatExpansionModule } from '@angular/material/expansion'
@@ -27,63 +26,64 @@ import { MatCheckboxModule } from '@angular/material/checkbox'
 import { EventEmitter } from '@angular/core'
 import { of } from 'rxjs'
 import { MatSnackBar } from '@angular/material/snack-bar'
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 
 describe('AddressSelectComponent', () => {
-  let component: AddressSelectComponent
-  let fixture: ComponentFixture<AddressSelectComponent>
-  let snackBar: any
-  let translateService
+    let component: AddressSelectComponent
+    let fixture: ComponentFixture<AddressSelectComponent>
+    let snackBar: any
+    let translateService
 
-  beforeEach(waitForAsync(() => {
-    translateService = jasmine.createSpyObj('TranslateService', ['get'])
-    translateService.get.and.returnValue(of({}))
-    translateService.onLangChange = new EventEmitter()
-    translateService.onTranslationChange = new EventEmitter()
-    translateService.onDefaultLangChange = new EventEmitter()
-    snackBar = jasmine.createSpyObj('MatSnackBar', ['open'])
-    snackBar.open.and.returnValue(null)
+    beforeEach(async () => {
+        translateService = {
+            get: vi.fn().mockName("TranslateService.get")
+        }
+        translateService.get.mockReturnValue(of({}))
+        translateService.onLangChange = new EventEmitter()
+        translateService.onTranslationChange = new EventEmitter()
+        translateService.onFallbackLangChange = new EventEmitter()
+        translateService.onDefaultLangChange = new EventEmitter()
+        snackBar = {
+            open: vi.fn().mockName("MatSnackBar.open")
+        }
+        snackBar.open.mockReturnValue(null)
 
-    TestBed.configureTestingModule({
-      imports: [
-        RouterTestingModule.withRoutes([
-          { path: 'delivery-method', component: DeliveryMethodComponent }
-        ]),
-        TranslateModule.forRoot(),
-        HttpClientTestingModule,
-        ReactiveFormsModule,
-
-        BrowserAnimationsModule,
-        MatCardModule,
-        MatTableModule,
-        MatFormFieldModule,
-        MatInputModule,
-        MatExpansionModule,
-        MatDividerModule,
-        MatRadioModule,
-        MatDialogModule,
-        MatIconModule,
-        MatTooltipModule,
-        MatCheckboxModule
-      ],
-      declarations: [AddressSelectComponent, AddressComponent, DeliveryMethodComponent],
-      providers: [{ provide: TranslateService, useValue: translateService },
-        { provide: MatSnackBar, useValue: snackBar }]
+        TestBed.configureTestingModule({
+            imports: [RouterTestingModule.withRoutes([
+                    { path: 'delivery-method', component: DeliveryMethodComponent }
+                ]),
+                TranslateModule.forRoot(),
+                ReactiveFormsModule,
+                MatCardModule,
+                MatTableModule,
+                MatFormFieldModule,
+                MatInputModule,
+                MatExpansionModule,
+                MatDividerModule,
+                MatRadioModule,
+                MatDialogModule,
+                MatIconModule,
+                MatTooltipModule,
+                MatCheckboxModule,
+                AddressSelectComponent, AddressComponent, DeliveryMethodComponent],
+            providers: [{ provide: TranslateService, useValue: translateService },
+                { provide: MatSnackBar, useValue: snackBar }, provideHttpClient(withInterceptorsFromDi()), provideHttpClientTesting()]
+        })
+            .compileComponents()
     })
-      .compileComponents()
-  }))
 
-  beforeEach(() => {
-    fixture = TestBed.createComponent(AddressSelectComponent)
-    component = fixture.componentInstance
-    fixture.detectChanges()
-  })
+    beforeEach(() => {
+        fixture = TestBed.createComponent(AddressSelectComponent)
+        component = fixture.componentInstance
+        fixture.detectChanges()
+    })
 
-  it('should create', () => {
-    expect(component).toBeTruthy()
-  })
+    it('should create', () => {
+        expect(component).toBeTruthy()
+    })
 
-  it('should store address id on calling getMessage', () => {
-    component.getMessage(1)
-    expect(component.addressId).toBe(1)
-  })
+    it('should store address id on calling getMessage', () => {
+        component.getMessage(1)
+        expect(component.addressId).toBe(1)
+    })
 })

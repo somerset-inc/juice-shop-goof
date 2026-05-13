@@ -1,26 +1,24 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
-import path = require('path')
-import { type Request, type Response, type NextFunction } from 'express'
-import { BasketModel } from '../models/basket'
-import { ProductModel } from '../models/product'
-import { BasketItemModel } from '../models/basketitem'
-import { QuantityModel } from '../models/quantity'
-import { DeliveryModel } from '../models/delivery'
-import { WalletModel } from '../models/wallet'
-import challengeUtils = require('../lib/challengeUtils')
+import fs from 'node:fs'
+import path from 'node:path'
 import config from 'config'
-import * as utils from '../lib/utils'
+import { type Request, type Response, type NextFunction } from 'express'
 
-const fs = require('fs')
-const PDFDocument = require('pdfkit')
-const security = require('../lib/insecurity')
-const products = require('../data/datacache').products
-const challenges = require('../data/datacache').challenges
-const db = require('../data/mongodb')
+import { challenges, products } from '../data/datacache'
+import * as challengeUtils from '../lib/challengeUtils'
+import { BasketItemModel } from '../models/basketitem'
+import { DeliveryModel } from '../models/delivery'
+import { QuantityModel } from '../models/quantity'
+import { ProductModel } from '../models/product'
+import { BasketModel } from '../models/basket'
+import { WalletModel } from '../models/wallet'
+import * as security from '../lib/insecurity'
+import * as utils from '../lib/utils'
+import * as db from '../data/mongodb'
 
 interface Product {
   quantity: number
@@ -31,7 +29,7 @@ interface Product {
   bonus: number
 }
 
-module.exports = function placeOrder () {
+export function placeOrder () {
   return (req: Request, res: Response, next: NextFunction) => {
     const id = req.params.id
     BasketModel.findOne({ where: { id }, include: [{ model: ProductModel, paranoid: false, as: 'Products' }] })
@@ -41,42 +39,47 @@ module.exports = function placeOrder () {
           const email = customer ? customer.data ? customer.data.email : '' : ''
           const orderId = security.hash(email).slice(0, 4) + '-' + utils.randomHexString(16)
           const pdfFile = `order_${orderId}.pdf`
+          const { default: PDFDocument } = await import('pdfkit')
           const doc = new PDFDocument()
           const date = new Date().toJSON().slice(0, 10)
           const fileWriter = doc.pipe(fs.createWriteStream(path.join('ftp/', pdfFile)))
 
-          fileWriter.on('finish', async () => {
-            void basket.update({ coupon: null })
-            await BasketItemModel.destroy({ where: { BasketId: id } })
-            res.json({ orderConfirmation: orderId })
+          fileWriter.on('finish', () => {
+            void (async () => {
+              void basket.update({ coupon: null })
+              await BasketItemModel.destroy({ where: { BasketId: id } })
+              res.json({ orderConfirmation: orderId })
+            })()
           })
 
-          doc.font('Times-Roman', 40).text(config.get('application.name'), { align: 'center' })
+          doc.font('Times-Roman').fontSize(40).text(config.get<string>('application.name'), { align: 'center' })
           doc.moveTo(70, 115).lineTo(540, 115).stroke()
           doc.moveTo(70, 120).lineTo(540, 120).stroke()
           doc.fontSize(20).moveDown()
-          doc.font('Times-Roman', 20).text(req.__('Order Confirmation'), { align: 'center' })
+          doc.font('Times-Roman').fontSize(20).text(req.__('Order Confirmation'), { align: 'center' })
           doc.fontSize(20).moveDown()
-          doc.font('Times-Roman', 15).text(`${req.__('Customer')}: ${email}`, { align: 'left' })
-          doc.font('Times-Roman', 15).text(`${req.__('Order')} #: ${orderId}`, { align: 'left' })
+          doc.font('Times-Roman').fontSize(15).text(`${req.__('Customer')}: ${email}`, { align: 'left' })
+          doc.font('Times-Roman').fontSize(15).text(`${req.__('Order')} #: ${orderId}`, { align: 'left' })
           doc.moveDown()
-          doc.font('Times-Roman', 15).text(`${req.__('Date')}: ${date}`, { align: 'left' })
+          doc.font('Times-Roman').fontSize(15).text(`${req.__('Date')}: ${date}`, { align: 'left' })
           doc.moveDown()
           doc.moveDown()
           let totalPrice = 0
           const basketProducts: Product[] = []
           let totalPoints = 0
-          basket.Products?.forEach(({ BasketItem, price, deluxePrice, name, id }) => {
+          for (const { BasketItem, price, deluxePrice, name, id } of basket.Products ?? []) {
             if (BasketItem != null) {
               challengeUtils.solveIf(challenges.christmasSpecialChallenge, () => { return BasketItem.ProductId === products.christmasSpecial.id })
-              QuantityModel.findOne({ where: { ProductId: BasketItem.ProductId } }).then((product: any) => {
-                const newQuantity = product.quantity - BasketItem.quantity
-                QuantityModel.update({ quantity: newQuantity }, { where: { ProductId: BasketItem?.ProductId } }).catch((error: unknown) => {
-                  next(error)
-                })
-              }).catch((error: unknown) => {
+              try {
+                const quantityRow = await QuantityModel.findOne({ where: { ProductId: BasketItem.ProductId } })
+                if (quantityRow) {
+                  const newQuantity = quantityRow.quantity - BasketItem.quantity
+                  await QuantityModel.update({ quantity: newQuantity }, { where: { ProductId: BasketItem.ProductId } })
+                }
+              } catch (error: unknown) {
                 next(error)
-              })
+                return
+              }
               let itemPrice: number
               if (security.isDeluxe(req)) {
                 itemPrice = deluxePrice
@@ -99,9 +102,9 @@ module.exports = function placeOrder () {
               totalPrice += itemTotal
               totalPoints += itemBonus
             }
-          })
+          }
           doc.moveDown()
-          const discount = calculateApplicableDiscount(basket, req)
+          const discount = calculateApplicableDiscount(basket, req) ?? 0
           let discountAmount = '0'
           if (discount > 0) {
             discountAmount = (totalPrice * (discount / 100)).toFixed(2)
@@ -126,13 +129,13 @@ module.exports = function placeOrder () {
           totalPrice += deliveryAmount
           doc.text(`${req.__('Delivery Price')}: ${deliveryAmount.toFixed(2)}¤`)
           doc.moveDown()
-          doc.font('Helvetica-Bold', 20).text(`${req.__('Total Price')}: ${totalPrice.toFixed(2)}¤`)
+          doc.font('Helvetica-Bold').fontSize(20).text(`${req.__('Total Price')}: ${totalPrice.toFixed(2)}¤`)
           doc.moveDown()
-          doc.font('Helvetica-Bold', 15).text(`${req.__('Bonus Points Earned')}: ${totalPoints}`)
-          doc.font('Times-Roman', 15).text(`(${req.__('The bonus points from this order will be added 1:1 to your wallet ¤-fund for future purchases!')}`)
+          doc.font('Helvetica-Bold').fontSize(15).text(`${req.__('Bonus Points Earned')}: ${totalPoints}`)
+          doc.font('Times-Roman').fontSize(15).text(`(${req.__('The bonus points from this order will be added 1:1 to your wallet ¤-fund for future purchases!')}`)
           doc.moveDown()
           doc.moveDown()
-          doc.font('Times-Roman', 15).text(req.__('Thank you for your order!'))
+          doc.font('Times-Roman').fontSize(15).text(req.__('Thank you for your order!'))
 
           challengeUtils.solveIf(challenges.negativeOrderChallenge, () => { return totalPrice < 0 })
 
@@ -140,19 +143,21 @@ module.exports = function placeOrder () {
             if (req.body.orderDetails && req.body.orderDetails.paymentId === 'wallet') {
               const wallet = await WalletModel.findOne({ where: { UserId: req.body.UserId } })
               if ((wallet != null) && wallet.balance >= totalPrice) {
-                WalletModel.decrement({ balance: totalPrice }, { where: { UserId: req.body.UserId } }).catch((error: unknown) => {
-                  next(error)
-                })
+                await WalletModel.decrement({ balance: totalPrice }, { where: { UserId: req.body.UserId } })
               } else {
                 next(new Error('Insufficient wallet balance.'))
+                return
               }
             }
-            WalletModel.increment({ balance: totalPoints }, { where: { UserId: req.body.UserId } }).catch((error: unknown) => {
+            try {
+              await WalletModel.increment({ balance: totalPoints }, { where: { UserId: req.body.UserId } })
+            } catch (error: unknown) {
               next(error)
-            })
+              return
+            }
           }
 
-          db.orders.insert({
+          db.ordersCollection.insert({
             promotionalAmount: discountAmount,
             paymentId: req.body.orderDetails ? req.body.orderDetails.paymentId : null,
             addressId: req.body.orderDetails ? req.body.orderDetails.addressId : null,
@@ -177,9 +182,9 @@ module.exports = function placeOrder () {
 }
 
 function calculateApplicableDiscount (basket: BasketModel, req: Request) {
-  if (security.discountFromCoupon(basket.coupon)) {
-    const discount = security.discountFromCoupon(basket.coupon)
-    challengeUtils.solveIf(challenges.forgedCouponChallenge, () => { return discount >= 80 })
+  const discount = security.discountFromCoupon(basket.coupon ?? undefined)
+  if (discount) {
+    challengeUtils.solveIf(challenges.forgedCouponChallenge, () => { return (discount ?? 0) >= 80 })
     return discount
   } else if (req.body.couponData) {
     const couponData = Buffer.from(req.body.couponData, 'base64').toString().split('-')

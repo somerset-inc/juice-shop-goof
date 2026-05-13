@@ -1,20 +1,29 @@
-import { Component, OnInit, ChangeDetectorRef } from '@angular/core'
+import { Component, ChangeDetectorRef, inject, OnInit, OnDestroy, AfterViewInit, ViewChild, ElementRef } from '@angular/core'
 import { KeysService } from '../Services/keys.service'
 import { SnackBarHelperService } from '../Services/snack-bar-helper.service'
-import { getDefaultProvider, ethers, BigNumber } from 'ethers'
+import { getDefaultProvider, ethers } from 'ethers'
 import {
   createClient,
   connect,
   disconnect,
   getAccount,
-  signMessage,
   InjectedConnector
 } from '@wagmi/core'
 import {
-  solidityCompiler,
-  getCompilerVersions
+  solidityCompiler
 } from 'solidity-browser-compiler'
+import { MatInputModule } from '@angular/material/input'
+import { MatFormFieldModule, MatLabel } from '@angular/material/form-field'
+import { TranslateModule } from '@ngx-translate/core'
+import { MatButtonModule } from '@angular/material/button'
+import { FormsModule } from '@angular/forms'
+import { MatIconModule } from '@angular/material/icon'
+import { EditorView, basicSetup } from 'codemirror'
+import { EditorState } from '@codemirror/state'
+import { getLanguageExtension } from '../shared/codemirror-extensions'
+import { juiceShopTheme } from '../shared/codemirror-theme'
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const client = createClient({
   autoConnect: true,
   provider: getDefaultProvider()
@@ -34,14 +43,16 @@ const compilerReleases = {
 @Component({
   selector: 'app-web3-sandbox',
   templateUrl: './web3-sandbox.component.html',
-  styleUrls: ['./web3-sandbox.component.scss']
+  styleUrls: ['./web3-sandbox.component.scss'],
+  imports: [FormsModule, MatButtonModule, MatIconModule, TranslateModule, MatFormFieldModule, MatLabel, MatInputModule]
 })
-export class Web3SandboxComponent {
-  constructor (
-    private readonly keysService: KeysService,
-    private readonly snackBarHelperService: SnackBarHelperService,
-    private readonly changeDetectorRef: ChangeDetectorRef
-  ) {}
+export class Web3SandboxComponent implements OnInit, AfterViewInit, OnDestroy {
+  @ViewChild('editorHost', { static: true }) editorHost!: ElementRef<HTMLDivElement>
+  private editorView!: EditorView
+  private readonly keysService = inject(KeysService)
+  private readonly snackBarHelperService = inject(SnackBarHelperService)
+  private readonly changeDetectorRef = inject(ChangeDetectorRef)
+
 
   ngOnInit (): void {
     this.handleAuth()
@@ -55,14 +66,14 @@ export class Web3SandboxComponent {
   compiledContracts = []
   deployedContractAddress = ''
   contractNames = []
-  commonGweiValue: number = 0
+  commonGweiValue = 0
   contractFunctions = []
   invokeOutput = ''
-  selectedCompilerVersion: string = '0.8.21'
+  selectedCompilerVersion = '0.8.21'
   compilerVersions: string[] = Object.keys(compilerReleases)
   compilerErrors = []
 
-  code: string = `// SPDX-License-Identifier: MIT
+  code = `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.14;
 
 contract HelloWorld {
@@ -70,11 +81,29 @@ contract HelloWorld {
         return 'Hello Contracts';
     }
 }`
-  editorOptions = {
-    mode: 'text/x-solidity',
-    theme: 'dracula',
-    lineNumbers: true,
-    lineWrapping: true
+
+  ngAfterViewInit (): void {
+    this.editorView = new EditorView({
+      parent: this.editorHost.nativeElement,
+      state: EditorState.create({
+        doc: this.code,
+        extensions: [
+          basicSetup,
+          ...juiceShopTheme(),
+          getLanguageExtension('solidity'),
+          EditorView.lineWrapping,
+          EditorView.updateListener.of(update => {
+            if (update.docChanged) {
+              this.code = update.state.doc.toString()
+            }
+          })
+        ]
+      })
+    })
+  }
+
+  ngOnDestroy (): void {
+    this.editorView?.destroy()
   }
 
   async compileAndFetchContracts (code: string) {
@@ -167,7 +196,7 @@ contract HelloWorld {
     }
   }
 
-  getInputHints (inputs: Array<{ name: string, type: string }>): string {
+  getInputHints (inputs: { name: string, type: string }[]): string {
     return inputs.map((input) => `${input.name}: ${input.type}`).join(', ')
   }
 
@@ -250,7 +279,7 @@ contract HelloWorld {
     }
   }
 
-  async handleChainChanged (chainId: string) {
+  async handleChainChanged () {
     await this.handleAuth()
   }
 
@@ -302,7 +331,7 @@ contract HelloWorld {
       console.log('session', this.session)
       this.changeDetectorRef.detectChanges()
     } catch (err) {
-      console.log('An error occured')
+      console.log('An error occurred', err)
     }
   }
 }

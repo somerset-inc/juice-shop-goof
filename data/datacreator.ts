@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
@@ -8,10 +8,12 @@ import { AddressModel } from '../models/address'
 import { BasketModel } from '../models/basket'
 import { BasketItemModel } from '../models/basketitem'
 import { CardModel } from '../models/card'
-import { ChallengeModel } from '../models/challenge'
+import { ChallengeModel, type ChallengeKey } from '../models/challenge'
+import { ChallengeDependencyModel } from '../models/challengeDependency'
 import { ComplaintModel } from '../models/complaint'
 import { DeliveryModel } from '../models/delivery'
 import { FeedbackModel } from '../models/feedback'
+import { HintModel } from '../models/hint'
 import { MemoryModel } from '../models/memory'
 import { ProductModel } from '../models/product'
 import { QuantityModel } from '../models/quantity'
@@ -20,31 +22,26 @@ import { SecurityAnswerModel } from '../models/securityAnswer'
 import { SecurityQuestionModel } from '../models/securityQuestion'
 import { UserModel } from '../models/user'
 import { WalletModel } from '../models/wallet'
-import { type Address, type Card, type Challenge, type Delivery, type Memory, type Product, type SecurityQuestion, type User } from './types'
+import { type Product } from './types'
 import logger from '../lib/logger'
+import { getCodeChallenges } from '../lib/codingChallenges'
+import type { Memory as MemoryConfig, Product as ProductConfig } from '../lib/config.types'
 import config from 'config'
-import path from 'path'
 import * as utils from '../lib/utils'
-const datacache = require('./datacache')
-const mongodb = require('./mongodb')
-const security = require('../lib/insecurity')
+import type { StaticUser, StaticUserAddress, StaticUserCard } from './staticData'
+import { loadStaticChallengeData, loadStaticDeliveryData, loadStaticUserData, loadStaticSecurityQuestionsData } from './staticData'
+import type { CreationAttributes } from 'sequelize'
+import { ordersCollection, reviewsCollection } from './mongodb'
+import { AllHtmlEntities as Entities } from 'html-entities'
+import * as datacache from './datacache'
+import * as security from '../lib/insecurity'
+import { variableDependencies, domainDependencies, preconditionResults } from '../lib/startup/validatePreconditions'
+// @ts-expect-error FIXME due to non-existing type definitions for replace
+import replace from 'replace'
 
-const fs = require('fs')
-const util = require('util')
-const { safeLoad } = require('js-yaml')
-const Entities = require('html-entities').AllHtmlEntities
 const entities = new Entities()
 
-const readFile = util.promisify(fs.readFile)
-
-function loadStaticData (file: string) {
-  const filePath = path.resolve('./data/static/' + file + '.yml')
-  return readFile(filePath, 'utf8')
-    .then(safeLoad)
-    .catch(() => logger.error('Could not open file: "' + filePath + '"'))
-}
-
-module.exports = async () => {
+export default async () => {
   const creators = [
     createSecurityQuestions,
     createUsers,
@@ -60,7 +57,8 @@ module.exports = async () => {
     createQuantity,
     createWallet,
     createDeliveryMethods,
-    createMemories
+    createMemories,
+    prepareFilesystem
   ]
 
   for (const creator of creators) {
@@ -69,48 +67,128 @@ module.exports = async () => {
 }
 
 async function createChallenges () {
-  const showHints = config.get('challenges.showHints')
-  const showMitigations = config.get('challenges.showMitigations')
+  const showHints = config.get<boolean>('challenges.showHints')
+  const showMitigations = config.get<boolean>('challenges.showMitigations')
 
-  const challenges = await loadStaticData('challenges')
+  const challenges = await loadStaticChallengeData()
+  const codeChallenges = await getCodeChallenges()
+  const challengeKeysWithCodeChallenges = [...codeChallenges.keys()]
 
-  await Promise.all(
-    challenges.map(async ({ name, category, description, difficulty, hint, hintUrl, mitigationUrl, key, disabledEnv, tutorial, tags }: Challenge) => {
-      const effectiveDisabledEnv = utils.determineDisabledEnv(disabledEnv)
-      description = description.replace('juice-sh.op', config.get('application.domain'))
-      description = description.replace('&lt;iframe width=&quot;100%&quot; height=&quot;166&quot; scrolling=&quot;no&quot; frameborder=&quot;no&quot; allow=&quot;autoplay&quot; src=&quot;https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/771984076&amp;color=%23ff5500&amp;auto_play=true&amp;hide_related=false&amp;show_comments=true&amp;show_user=true&amp;show_reposts=false&amp;show_teaser=true&quot;&gt;&lt;/iframe&gt;', entities.encode(config.get('challenges.xssBonusPayload')))
-      hint = hint.replace(/OWASP Juice Shop's/, `${config.get('application.name')}'s`)
+  const challengeRecords: Array<CreationAttributes<ChallengeModel>> = []
+  const pendingDependencies: Array<{ challengeKey: ChallengeKey, deps: any[] }> = []
+  const pendingHints: Array<{ challengeKey: ChallengeKey, hints: string[] }> = []
 
-      try {
-        datacache.challenges[key] = await ChallengeModel.create({
-          key,
-          name,
-          category,
-          tags: (tags != null) ? tags.join(',') : undefined,
-          description: effectiveDisabledEnv ? (description + ' <em>(This challenge is <strong>' + (config.get('challenges.safetyOverride') ? 'potentially harmful' : 'not available') + '</strong> on ' + effectiveDisabledEnv + '!)</em>') : description,
-          difficulty,
-          solved: false,
-          hint: showHints ? hint : null,
-          hintUrl: showHints ? hintUrl : null,
-          mitigationUrl: showMitigations ? mitigationUrl : null,
-          disabledEnv: config.get<boolean>('challenges.safetyOverride') ? null : effectiveDisabledEnv,
-          tutorialOrder: (tutorial != null) ? tutorial.order : null,
-          codingChallengeStatus: 0
-        })
-      } catch (err) {
-        logger.error(`Could not insert Challenge ${name}: ${utils.getErrorMessage(err)}`)
+  for (const challenge of challenges) {
+    let description = challenge.description
+    let tags = challenge.tags
+
+    const { enabled: isChallengeEnabled, disabledBecause } = utils.getChallengeEnablementStatus({ disabledEnv: challenge.disabledEnv?.join(';') ?? '' } as ChallengeModel)
+    description = description.replace('juice-sh.op', config.get<string>('application.domain'))
+    description = description.replace('&lt;iframe width=&quot;100%&quot; height=&quot;166&quot; scrolling=&quot;no&quot; frameborder=&quot;no&quot; allow=&quot;autoplay&quot; src=&quot;https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/771984076&amp;color=%23ff5500&amp;auto_play=true&amp;hide_related=false&amp;show_comments=true&amp;show_user=true&amp;show_reposts=false&amp;show_teaser=true&quot;&gt;&lt;/iframe&gt;', entities.encode(config.get('challenges.xssBonusPayload')))
+    const hasCodingChallenge = challengeKeysWithCodeChallenges.includes(challenge.key)
+
+    if (hasCodingChallenge) {
+      tags = tags ? [...tags, 'With Coding Challenge'] : ['With Coding Challenge']
+    }
+
+    for (const dependency of Object.values(variableDependencies)) {
+      if (dependency.dependentChallenges.some(dep => dep.includes(challenge.name) || dep.includes(challenge.key))) {
+        tags = tags ? [...tags, `Requires ${dependency.dependency}`] : [`Requires ${dependency.dependency}`]
       }
+    }
+    for (const dependency of Object.values(domainDependencies)) {
+      if (dependency.dependentChallenges.some(dep => dep.includes(challenge.name) || dep.includes(challenge.key))) {
+        tags = tags ? [...tags, `Requires ${dependency.dependency}`] : [`Requires ${dependency.dependency}`]
+      }
+    }
+
+    const challengeDependencies: any[] = []
+    for (const [variable, dependency] of Object.entries(variableDependencies)) {
+      if (dependency.dependentChallenges.some(dep => dep.includes(challenge.name) || dep.includes(challenge.key))) {
+        challengeDependencies.push({ ...dependency, key: variable, missing: !preconditionResults[variable] })
+      }
+    }
+    for (const [domain, dependency] of Object.entries(domainDependencies)) {
+      if (dependency.dependentChallenges.some(dep => dep.includes(challenge.name) || dep.includes(challenge.key))) {
+        challengeDependencies.push({ ...dependency, key: domain, missing: !preconditionResults[domain] })
+      }
+    }
+
+    challengeRecords.push({
+      key: challenge.key,
+      name: challenge.name,
+      category: challenge.category,
+      tags: (tags != null) ? tags.join(',') : undefined,
+      // todo(@J12934) currently missing the 'not available' text. Needs changes to the model and utils functions
+      description: isChallengeEnabled ? description : (description + ' <em>(This challenge is <strong>potentially harmful</strong> on ' + disabledBecause + '!)</em>'),
+      difficulty: challenge.difficulty,
+      solved: false,
+      mitigationUrl: showMitigations ? challenge.mitigationUrl : null,
+      disabledEnv: disabledBecause,
+      tutorialOrder: (challenge.tutorial != null) ? challenge.tutorial.order : null,
+      codingChallengeStatus: 0,
+      hasCodingChallenge
     })
-  )
+
+    if (challengeDependencies.length > 0) {
+      pendingDependencies.push({ challengeKey: challenge.key, deps: challengeDependencies })
+    }
+    if (showHints && challenge.hints?.length > 0) {
+      pendingHints.push({ challengeKey: challenge.key, hints: challenge.hints })
+    }
+  }
+
+  try {
+    const createdChallenges = await ChallengeModel.bulkCreate(challengeRecords)
+    for (const challenge of createdChallenges) {
+      datacache.challenges[challenge.key] = challenge
+    }
+  } catch (err) {
+    logger.error(`Could not bulk insert Challenges: ${utils.getErrorMessage(err)}`)
+    return
+  }
+
+  if (pendingDependencies.length > 0) {
+    const allDependencyRecords = pendingDependencies.flatMap(({ challengeKey, deps }) =>
+      deps.map(dep => ({
+        ChallengeId: datacache.challenges[challengeKey].id,
+        name: dep.dependency,
+        documentation: dep.documentation,
+        key: dep.key,
+        missing: dep.missing
+      }))
+    )
+    try {
+      await ChallengeDependencyModel.bulkCreate(allDependencyRecords)
+    } catch (err) {
+      logger.error(`Could not bulk insert ChallengeDependencies: ${utils.getErrorMessage(err)}`)
+    }
+  }
+
+  if (pendingHints.length > 0) {
+    const allHintRecords = pendingHints.flatMap(({ challengeKey, hints }) =>
+      hints.map((hint, index) => ({
+        ChallengeId: datacache.challenges[challengeKey].id,
+        text: hint.replace(/OWASP Juice Shop/, `${config.get<string>('application.name')}`),
+        order: index + 1,
+        unlocked: false
+      }))
+    )
+    try {
+      await HintModel.bulkCreate(allHintRecords)
+    } catch (err) {
+      logger.error(`Could not bulk insert Hints: ${utils.getErrorMessage(err)}`)
+    }
+  }
 }
 
 async function createUsers () {
-  const users = await loadStaticData('users')
+  const users = await loadStaticUserData()
 
   await Promise.all(
-    users.map(async ({ username, email, password, customDomain, key, role, deletedFlag, profileImage, securityQuestion, feedback, address, card, totpSecret, lastLoginIp = '' }: User) => {
+    users.map(async ({ username, email, password, customDomain, key, role, deletedFlag, profileImage, securityQuestion, feedback, address, card, totpSecret, lastLoginIp = '' }) => {
       try {
-        const completeEmail = customDomain ? email : `${email}@${config.get('application.domain')}`
+        const completeEmail = customDomain ? email : `${email}@${config.get<string>('application.domain')}`
         const user = await UserModel.create({
           username,
           email: completeEmail,
@@ -135,9 +213,9 @@ async function createUsers () {
 }
 
 async function createWallet () {
-  const users = await loadStaticData('users')
+  const users = await loadStaticUserData()
   return await Promise.all(
-    users.map(async (user: User, index: number) => {
+    users.map(async (user: StaticUser, index: number) => {
       return await WalletModel.create({
         UserId: index + 1,
         balance: user.walletBalance ?? 0
@@ -149,10 +227,10 @@ async function createWallet () {
 }
 
 async function createDeliveryMethods () {
-  const deliveries = await loadStaticData('deliveries')
+  const deliveries = await loadStaticDeliveryData()
 
   await Promise.all(
-    deliveries.map(async ({ name, price, deluxePrice, eta, icon }: Delivery) => {
+    deliveries.map(async ({ name, price, deluxePrice, eta, icon }) => {
       try {
         await DeliveryModel.create({
           name,
@@ -168,7 +246,7 @@ async function createDeliveryMethods () {
   )
 }
 
-async function createAddresses (UserId: number, addresses: Address[]) {
+async function createAddresses (UserId: number, addresses: StaticUserAddress[]) {
   return await Promise.all(
     addresses.map(async (address) => {
       return await AddressModel.create({
@@ -187,7 +265,7 @@ async function createAddresses (UserId: number, addresses: Address[]) {
   )
 }
 
-async function createCards (UserId: number, cards: Card[]) {
+async function createCards (UserId: number, cards: StaticUserCard[]) {
   return await Promise.all(cards.map(async (card) => {
     return await CardModel.create({
       UserId,
@@ -238,7 +316,7 @@ async function createRandomFakeUsers () {
 
 async function createQuantity () {
   return await Promise.all(
-    config.get<Product[]>('products').map(async (product: Product, index: number) => {
+    config.get<ProductConfig[]>('products').map(async (product, index) => {
       return await QuantityModel.create({
         ProductId: index + 1,
         quantity: product.quantity ?? Math.floor(Math.random() * 70 + 30),
@@ -253,13 +331,13 @@ async function createQuantity () {
 async function createMemories () {
   const memories = [
     MemoryModel.create({
-      imagePath: 'assets/public/images/uploads/😼-#zatschi-#whoneedsfourlegs-1572600969477.jpg',
+      imagePath: 'assets/public/images/uploads/ᓚᘏᗢ-#zatschi-#whoneedsfourlegs-1572600969477.jpg',
       caption: '😼 #zatschi #whoneedsfourlegs',
       UserId: datacache.users.bjoernOwasp.id
     }).catch((err: unknown) => {
       logger.error(`Could not create memory: ${utils.getErrorMessage(err)}`)
     }),
-    ...utils.thaw(config.get('memories')).map(async (memory: Memory) => {
+    ...structuredClone(config.get<MemoryConfig[]>('memories')).map(async (memory) => {
       let tmpImageFileName = memory.image
       if (utils.isUrl(memory.image)) {
         const imageUrl = memory.image
@@ -274,10 +352,20 @@ async function createMemories () {
         await createSecurityAnswer(datacache.users.emma.id, memory.geoStalkingVisualSecurityQuestion, memory.geoStalkingVisualSecurityAnswer)
         memory.user = 'emma'
       }
+      if (!memory.user) {
+        logger.warn(`Could not find user for memory ${memory.caption}!`)
+        return
+      }
+      const userIdOfMemory = datacache.users[memory.user].id.valueOf() ?? null
+      if (!userIdOfMemory) {
+        logger.warn(`Could not find saved user for memory ${memory.caption}!`)
+        return
+      }
+
       return await MemoryModel.create({
         imagePath: 'assets/public/images/uploads/' + tmpImageFileName,
         caption: memory.caption,
-        UserId: datacache.users[memory.user].id
+        UserId: userIdOfMemory
       }).catch((err: unknown) => {
         logger.error(`Could not create memory: ${utils.getErrorMessage(err)}`)
       })
@@ -288,7 +376,7 @@ async function createMemories () {
 }
 
 async function createProducts () {
-  const products = utils.thaw(config.get('products')).map((product: Product) => {
+  const products = structuredClone(config.get<ProductConfig[]>('products')).map((product) => {
     product.price = product.price ?? Math.floor(Math.random() * 9 + 1)
     product.deluxePrice = product.deluxePrice ?? product.price
     product.description = product.description || 'Lorem ipsum dolor sit amet, consectetuer adipiscing elit.'
@@ -304,25 +392,32 @@ async function createProducts () {
   })
 
   // add Challenge specific information
-  const christmasChallengeProduct = products.find(({ useForChristmasSpecialChallenge }: { useForChristmasSpecialChallenge: boolean }) => useForChristmasSpecialChallenge)
-  const pastebinLeakChallengeProduct = products.find(({ keywordsForPastebinDataLeakChallenge }: { keywordsForPastebinDataLeakChallenge: string[] }) => keywordsForPastebinDataLeakChallenge)
-  const tamperingChallengeProduct = products.find(({ urlForProductTamperingChallenge }: { urlForProductTamperingChallenge: string }) => urlForProductTamperingChallenge)
-  const blueprintRetrievalChallengeProduct = products.find(({ fileForRetrieveBlueprintChallenge }: { fileForRetrieveBlueprintChallenge: string }) => fileForRetrieveBlueprintChallenge)
+  const christmasChallengeProduct = products.find(({ useForChristmasSpecialChallenge }) => useForChristmasSpecialChallenge)
+  const pastebinLeakChallengeProduct = products.find(({ keywordsForPastebinDataLeakChallenge }) => keywordsForPastebinDataLeakChallenge)
+  const tamperingChallengeProduct = products.find(({ urlForProductTamperingChallenge }) => urlForProductTamperingChallenge)
+  const blueprintRetrievalChallengeProduct = products.find(({ fileForRetrieveBlueprintChallenge }) => fileForRetrieveBlueprintChallenge)
 
-  christmasChallengeProduct.description += ' (Seasonal special offer! Limited availability!)'
-  christmasChallengeProduct.deletedDate = '2014-12-27 00:00:00.000 +00:00'
-  tamperingChallengeProduct.description += ' <a href="' + tamperingChallengeProduct.urlForProductTamperingChallenge + '" target="_blank">More...</a>'
-  tamperingChallengeProduct.deletedDate = null
-  pastebinLeakChallengeProduct.description += ' (This product is unsafe! We plan to remove it from the stock!)'
-  pastebinLeakChallengeProduct.deletedDate = '2019-02-1 00:00:00.000 +00:00'
-
-  let blueprint = blueprintRetrievalChallengeProduct.fileForRetrieveBlueprintChallenge
-  if (utils.isUrl(blueprint)) {
-    const blueprintUrl = blueprint
-    blueprint = utils.extractFilename(blueprint)
-    await utils.downloadToFile(blueprintUrl, 'frontend/dist/frontend/assets/public/images/products/' + blueprint)
+  if (christmasChallengeProduct) {
+    christmasChallengeProduct.description += ' (Seasonal special offer! Limited availability!)'
+    christmasChallengeProduct.deletedDate = '2014-12-27 00:00:00.000 +00:00'
   }
-  datacache.retrieveBlueprintChallengeFile = blueprint
+  if (tamperingChallengeProduct) {
+    tamperingChallengeProduct.description += ' <a href="' + tamperingChallengeProduct.urlForProductTamperingChallenge + '" target="_blank">More...</a>'
+    delete tamperingChallengeProduct.deletedDate
+  }
+  if (pastebinLeakChallengeProduct) {
+    pastebinLeakChallengeProduct.description += ' (This product is unsafe! We plan to remove it from the stock!)'
+    pastebinLeakChallengeProduct.deletedDate = '2019-02-1 00:00:00.000 +00:00'
+  }
+  if (blueprintRetrievalChallengeProduct) {
+    let blueprint = blueprintRetrievalChallengeProduct.fileForRetrieveBlueprintChallenge!
+    if (utils.isUrl(blueprint)) {
+      const blueprintUrl = blueprint
+      blueprint = utils.extractFilename(blueprint)
+      await utils.downloadToFile(blueprintUrl, 'frontend/dist/frontend/assets/public/images/products/' + blueprint)
+    }
+    datacache.setRetrieveBlueprintChallengeFile(blueprint)
+  }
 
   return await Promise.all(
     products.map(
@@ -331,28 +426,21 @@ async function createProducts () {
           name: product.name,
           description: product.description,
           price: product.price,
-          deluxePrice: product.deluxePrice,
+          deluxePrice: product.deluxePrice ?? product.price,
           image: product.image
         }).catch(
           (err: unknown) => {
             logger.error(`Could not insert Product ${product.name}: ${utils.getErrorMessage(err)}`)
           }
-        ).then((persistedProduct) => {
+        ).then(async (persistedProduct) => {
           if (persistedProduct != null) {
             if (useForChristmasSpecialChallenge) { datacache.products.christmasSpecial = persistedProduct }
             if (urlForProductTamperingChallenge) {
               datacache.products.osaft = persistedProduct
-              datacache.challenges.changeProductChallenge.update({
+              await datacache.challenges.changeProductChallenge.update({
                 description: customizeChangeProductChallenge(
                   datacache.challenges.changeProductChallenge.description,
                   config.get('challenges.overwriteUrlForProductTamperingChallenge'),
-                  persistedProduct)
-              })
-            }
-            if (fileForRetrieveBlueprintChallenge && datacache.challenges.changeProductChallenge.hint) {
-              datacache.challenges.retrieveBlueprintChallenge.update({
-                hint: customizeRetrieveBlueprintChallenge(
-                  datacache.challenges.retrieveBlueprintChallenge.hint,
                   persistedProduct)
               })
             }
@@ -365,7 +453,7 @@ async function createProducts () {
           .then(async ({ id }: { id: number }) =>
             await Promise.all(
               reviews.map(({ text, author }) =>
-                mongodb.reviews.insert({
+                reviewsCollection.insert({
                   message: text,
                   author: datacache.users[author].email,
                   product: id,
@@ -384,10 +472,6 @@ async function createProducts () {
     let customDescription = description.replace(/OWASP SSL Advanced Forensic Tool \(O-Saft\)/g, customProduct.name)
     customDescription = customDescription.replace('https://owasp.slack.com', customUrl)
     return customDescription
-  }
-
-  function customizeRetrieveBlueprintChallenge (hint: string, customProduct: Product) {
-    return hint.replace(/OWASP Juice Shop Logo \(3D-printed\)/g, customProduct.name)
   }
 }
 
@@ -589,10 +673,10 @@ async function createRecycle (data: { UserId: number, quantity: number, AddressI
 }
 
 async function createSecurityQuestions () {
-  const questions = await loadStaticData('securityQuestions')
+  const questions = await loadStaticSecurityQuestionsData()
 
   await Promise.all(
-    questions.map(async ({ question }: SecurityQuestion) => {
+    questions.map(async ({ question }) => {
       try {
         await SecurityQuestionModel.create({ question })
       } catch (err) {
@@ -659,7 +743,7 @@ async function createOrders () {
     }
   ]
 
-  const adminEmail = 'admin@' + config.get('application.domain')
+  const adminEmail = 'admin@' + config.get<string>('application.domain')
   const orders = [
     {
       orderId: security.hash(adminEmail).slice(0, 4) + '-' + utils.randomHexString(16),
@@ -692,7 +776,7 @@ async function createOrders () {
 
   return await Promise.all(
     orders.map(({ orderId, email, totalPrice, bonus, products, eta, delivered }) =>
-      mongodb.orders.insert({
+      ordersCollection.insert({
         orderId,
         email,
         totalPrice,
@@ -705,4 +789,14 @@ async function createOrders () {
       })
     )
   )
+}
+
+async function prepareFilesystem () {
+  replace({
+    regex: 'http://localhost:3000',
+    replacement: config.get<string>('server.baseUrl'),
+    paths: ['.well-known/csaf/provider-metadata.json'],
+    recursive: true,
+    silent: true
+  })
 }

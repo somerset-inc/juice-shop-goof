@@ -1,14 +1,14 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
-import { ClipboardModule } from 'ngx-clipboard'
 import { ServerStartedNotificationComponent } from './server-started-notification/server-started-notification.component'
 import { TranslateModule, TranslateService } from '@ngx-translate/core'
-import { HttpClientTestingModule } from '@angular/common/http/testing'
+import { provideHttpClientTesting } from '@angular/common/http/testing'
 import { RouterTestingModule } from '@angular/router/testing'
-import { TestBed, waitForAsync } from '@angular/core/testing'
+import { provideZoneChangeDetection } from '@angular/core'
+import { TestBed } from '@angular/core/testing'
 import { AppComponent } from './app.component'
 import { NavbarComponent } from './navbar/navbar.component'
 import { SidenavComponent } from './sidenav/sidenav.component'
@@ -25,36 +25,25 @@ import { MatMenuModule } from '@angular/material/menu'
 import { MatTooltipModule } from '@angular/material/tooltip'
 import { MatListModule } from '@angular/material/list'
 import { MatCardModule } from '@angular/material/card'
-import { NoopAnimationsModule } from '@angular/platform-browser/animations'
-import { NgMatSearchBarModule } from 'ng-mat-search-bar'
 import { MatRadioModule } from '@angular/material/radio'
 import { MatDividerModule } from '@angular/material/divider'
 import { MatDialogModule } from '@angular/material/dialog'
 import { LoginGuard } from './app.guard'
 import { MatInputModule } from '@angular/material/input'
 import { MatSnackBarModule } from '@angular/material/snack-bar'
-import { CookieModule } from 'ngx-cookie'
+import { MatSearchBarComponent } from './mat-search-bar/mat-search-bar.component'
+import { CookieModule } from 'ngy-cookie'
+import { provideHttpClient, withInterceptorsFromDi } from '@angular/common/http'
 
 describe('AppComponent', () => {
   let app: AppComponent
 
-  beforeEach(waitForAsync(() => {
-    TestBed.configureTestingModule({
-      declarations: [
-        AppComponent,
-        NavbarComponent,
-        WelcomeComponent,
-        SidenavComponent,
-        ChallengeSolvedNotificationComponent,
-        ServerStartedNotificationComponent
-      ],
-      imports: [
-        HttpClientTestingModule,
-        RouterTestingModule,
+  beforeEach(async () => {
+    await TestBed.configureTestingModule({
+      imports: [RouterTestingModule,
         MatToolbarModule,
         CookieModule.forRoot(),
         TranslateModule.forRoot(),
-        ClipboardModule,
         MatIconModule,
         MatCardModule,
         MatFormFieldModule,
@@ -64,17 +53,21 @@ describe('AppComponent', () => {
         MatSidenavModule,
         MatMenuModule,
         MatTooltipModule,
-        NoopAnimationsModule,
         MatSnackBarModule,
-        NgMatSearchBarModule,
         MatRadioModule,
         MatDividerModule,
         MatListModule,
-        MatDialogModule
-      ],
-      providers: [TranslateService, LoginGuard]
+        MatDialogModule,
+        NavbarComponent,
+        WelcomeComponent,
+        SidenavComponent,
+        ChallengeSolvedNotificationComponent,
+        ServerStartedNotificationComponent,
+        MatSearchBarComponent,
+        AppComponent],
+      providers: [TranslateService, LoginGuard, provideHttpClient(withInterceptorsFromDi()), provideHttpClientTesting(), provideZoneChangeDetection()]
     }).compileComponents()
-  }))
+  })
 
   beforeEach(() => {
     const fixture = TestBed.createComponent(AppComponent)
@@ -82,7 +75,7 @@ describe('AppComponent', () => {
     fixture.detectChanges()
   })
 
-  it('should create the app', waitForAsync(() => {
+  it('should create the app', () => {
     expect(app).toBeTruthy()
-  }))
+  })
 })

@@ -1,20 +1,27 @@
 import { type Request, type Response } from 'express'
-import challengeUtils = require('../lib/challengeUtils')
+
+import logger from '../lib/logger'
+import * as challengeUtils from '../lib/challengeUtils'
+import { nftABI } from '../data/static/contractABIs'
+import { challenges } from '../data/datacache'
 import * as utils from '../lib/utils'
-const nftABI = require('../data/static/contractABIs').nftABI
-const ethers = require('ethers')
-const challenges = require('../data/datacache').challenges
+
 const nftAddress = '0x41427790c94E7a592B17ad694eD9c06A02bb9C39'
 const addressesMinted = new Set()
 let isEventListenerCreated = false
 
-module.exports.nftMintListener = function nftMintListener () {
-  return (req: Request, res: Response) => {
+export function nftMintListener () {
+  return async (req: Request, res: Response) => {
     try {
-      const provider = new ethers.WebSocketProvider('wss://eth-sepolia.g.alchemy.com/v2/FZDapFZSs1l6yhHW4VnQqsi18qSd-3GJ')
-      const contract = new ethers.Contract(nftAddress, nftABI, provider)
       if (!isEventListenerCreated) {
-        contract.on('NFTMinted', (minter: string) => {
+        const { WebSocketProvider, Contract } = await import('ethers')
+        const provider = new WebSocketProvider(`wss://eth-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY ?? ''}`)
+        provider.websocket.onerror = (error: any) => {
+          logger.error(`WebSocket error (NFT Mint Listener): ${error.message || error}`)
+          isEventListenerCreated = false
+        }
+        const contract = new Contract(nftAddress, nftABI, provider as any)
+        void contract.on('NFTMinted', (minter: string) => {
           if (!addressesMinted.has(minter)) {
             addressesMinted.add(minter)
           }
@@ -28,7 +35,7 @@ module.exports.nftMintListener = function nftMintListener () {
   }
 }
 
-module.exports.walletNFTVerify = function walletNFTVerify () {
+export function walletNFTVerify () {
   return (req: Request, res: Response) => {
     try {
       const metamaskAddress = req.body.walletAddress

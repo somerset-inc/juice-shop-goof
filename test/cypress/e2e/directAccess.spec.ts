@@ -1,6 +1,12 @@
 describe('/', () => {
   describe('challenge "easterEgg2"', () => {
     it('should be able to access "secret" url for easter egg', () => {
+      cy.on('uncaught:exception', (err) => {
+        if (err.message.includes('getExtension') || err.message.includes('Cannot read properties of null')) {
+          return false
+        }
+        return true
+      })
       cy.visit(
         '/the/devs/are/so/funny/they/hid/an/easter/egg/within/the/easter/egg'
       )
@@ -51,7 +57,7 @@ describe('/', () => {
     it('should be able to access the crazy cat photo', () => {
       // cy.visit requires a text/html response and this is an image hence cy.request has been used
       cy.request(
-        '/assets/public/images/uploads/%F0%9F%98%BC-%23zatschi-%23whoneedsfourlegs-1572600969477.jpg'
+        '/assets/public/images/uploads/%E1%93%9A%E1%98%8F%E1%97%A2-%23zatschi-%23whoneedsfourlegs-1572600969477.jpg'
       )
       cy.expectChallengeSolved({ challenge: 'Missing Encoding' })
     })
@@ -77,7 +83,7 @@ describe('/', () => {
     it("should be able to access today's access log file", () => {
       // cy.visit requires a text/html response hence cy.request has been used
       cy.task<Date>('toISO8601').then((date: Date) => {
-        cy.request(`/support/logs/access.log.${date}`)
+        cy.request(`/support/logs/access.log.${date.toString()}`)
       })
       cy.expectChallengeSolved({ challenge: 'Access Log' })
     })

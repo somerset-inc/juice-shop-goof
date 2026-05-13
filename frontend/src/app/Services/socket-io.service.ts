@@ -1,19 +1,22 @@
 /*
- * Copyright (c) 2014-2023 Bjoern Kimminich & the OWASP Juice Shop contributors.
+ * Copyright (c) 2014-2026 Bjoern Kimminich & the OWASP Juice Shop contributors.
  * SPDX-License-Identifier: MIT
  */
 
 import { environment } from 'src/environments/environment'
-import { Injectable, NgZone } from '@angular/core'
-import { io, type Socket } from 'socket.io-client'
+import { Injectable, NgZone, inject } from '@angular/core'
+import io from 'socket.io-client'
+type Socket = ReturnType<typeof io>
 
 @Injectable({
   providedIn: 'root'
 })
 export class SocketIoService {
+  private readonly ngZone = inject(NgZone)
+
   private _socket: Socket
 
-  constructor (private readonly ngZone: NgZone) {
+  constructor () {
     this.ngZone.runOutsideAngular(() => {
       if (environment.hostServer === '.') {
         this._socket = io(window.location.origin, {

@@ -13,6 +13,8 @@ application:
     name: 'Foxy'
     avatar: 'https://upload.wikimedia.org/wikipedia/commons/9/9f/Fennec_Fox_Vulpes_zerda.jpg'
   social:
+    blueSkyUrl: null
+    mastodonUrl: null
     twitterUrl: 'https://twitter.com/mozcloudsec'
     facebookUrl: null
     slackUrl: null
@@ -37,7 +39,6 @@ challenges:
   showHints: false
   codingChallengesEnabled: never
   xssBonusPayload: '<iframe width="560" height="315" src="https://www.youtube.com/embed/0u9g0LhRkGk" frameborder="0" allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>'
-  showFeedbackButtons: false
 hackingInstructor:
   isEnabled: false
 products:
